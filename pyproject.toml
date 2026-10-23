@@ -1,13 +1,28 @@
 [project]
-name = "my_project"
+name = "encoder-exorcist"
 version = "0.1.0"
-description = "Add your description here"
+
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ace-step",
+    # PyTorch per platform, copied from ACE-Step @ ca1e85f
+    # Windows (CUDA 12.8)
+    "torch==2.7.1+cu128; sys_platform == 'win32'",
+    "torchvision==0.22.1+cu128; sys_platform == 'win32'",
+    "torchaudio==2.7.1+cu128; sys_platform == 'win32'",
+    # Linux x86_64 (CUDA 12.8)
+    "torch==2.10.0+cu128; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision==0.25.0+cu128; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchaudio==2.10.0+cu128; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # macOS Apple Silicon (MPS)
+    "torch>=2.9.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "torchvision; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "torchaudio>=2.9.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 
 [project.scripts]
-my_project = "my_project.main:main"
+ghosts = "ghosts.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -22,8 +37,30 @@ dev = [
     "ty>=0.0.89",
 ]
 
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv]
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+
+[tool.uv.sources]
+# Pinned to one commit so the whole team runs identical model code.
+# When upgrading, change `rev` in BOTH lines.
+ace-step = { git = "https://github.com/ace-step/ACE-Step-1.5", rev = "ca1e85fe9430179831e6bc6be790c332190a3866" }
+# Not on PyPI; ACE-Step vendors it in a subfolder (LM inference backend).
+nano-vllm = { git = "https://github.com/ace-step/ACE-Step-1.5", rev = "ca1e85fe9430179831e6bc6be790c332190a3866", subdirectory = "acestep/third_parts/nano-vllm" }
+torch = { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }
+torchvision = { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }
+torchaudio = { index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }
+
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 line-length = 120
 
 [tool.pytest.ini_options]

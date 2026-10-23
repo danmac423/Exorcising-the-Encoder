@@ -21,7 +21,7 @@ test:
 check: lint typecheck test
 
 run:
-	uv run my_project
+	uv run encoder_exorcist
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +

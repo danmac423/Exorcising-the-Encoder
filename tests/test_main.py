@@ -1,5 +1,5 @@
-from my_project.config import DEFAULT_NAME
-from my_project.services.greeter import greet
+from encoder_exorcist.config import DEFAULT_NAME
+from encoder_exorcist.services.greeter import greet
 
 
 def test_greet_default() -> None:
