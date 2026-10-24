@@ -66,22 +66,75 @@ The LM writes 5 audio-code tokens per second of audio, one token at a time, so i
 
 The schedule assumes about 4 h, 6 h and 8 h for these runs. Those figures hold for every option except **full-length songs with the LM**, which need overnight runs. The LEACE re-generation in week 8 costs the same as the corresponding row above.
 
-## What is the "5Hz LM"?
+## How ACE-Step 1.5 generates a song
 
-ACE-Step 1.5 is a two-stage pipeline:
+ACE-Step 1.5 has two stages. An optional **planner**, the 5Hz LM, sketches the song. A **renderer**, the diffusion model (DiT) together with its encoders and the VAE, turns that sketch plus the text into audio. Everything below was checked against the code at the pinned commit (`acestep/inference.py`, `checkpoints/acestep-v15-turbo/modeling_acestep_v15_turbo.py`).
 
 ```
-caption + lyrics
-      │
-      ▼
- 5Hz LM (1.7B, autoregressive)   optional "thinking" stage:
-      │                          fills in metadata (BPM, key, duration, caption),
-      │                          then writes coarse audio codes (5 tokens/s) = song plan
-      ▼
- Text encoder (Qwen3-Embedding-0.6B) → DiT (diffusion, 8 steps) → VAE decoder → 48 kHz audio
+ caption ("upbeat pop, female vocals…")        lyrics ("[Verse 1] Walking down…")
+      │                                              │
+      ├──────────────────────┐                       ├───────────────────────┐
+      │                      ▼                       │                       ▼
+      │   ┌─────────────────────────────────────────────────┐                │
+      │   │ STAGE 1 (optional): 5Hz LM, 1.7B, autoregressive│                │ 
+      │   │  phase 1: <think> metadata: BPM, key, duration, │                │
+      │   │           language, rewritten caption           │                │
+      │   │  phase 2: audio codes, 5 tokens per second      │                │
+      │   └─────────────────────────────────────────────────┘                │
+      │                      │ audio codes (e.g. 900 tokens for 3 min)       │
+      ▼                      ▼                                               ▼
+ Qwen3-Embedding-0.6B    Detokenizer: 5 Hz → 25 Hz          Qwen3 token embeddings only
+ (full model forward)    latent "sketch"                    (lookup table, no forward)
+      │                      │                                               │
+      ▼                      │                                               ▼
+ text projector              │                              Lyric encoder (8 transformer
+      │                      │                              layers, part of the DiT)
+      │                      │                                               │
+      └────────┬─────────────┼───────────────────────────────────────────────┘
+               │             │
+               ▼             ▼
+      condition sequence   context latents
+      [lyrics | timbre |   (LM sketch, or silence
+       caption]            if no LM)
+               │             │
+               ▼             ▼
+      ┌───────────────────────────────────────┐
+      │ STAGE 2: DiT (24 layers, turbo)       │  starts from random noise,
+      │ flow matching, 8 denoising steps      │  cross-attends to the condition
+      └───────────────────────────────────────┘  sequence at every step
+                       │ latent audio: 64 channels × 25 frames per second
+                       ▼
+                 VAE decoder  →  48 kHz stereo waveform
 ```
 
-Without the LM, the DiT generates directly from the caption and lyrics embeddings. With the LM, the DiT also receives the LM's audio codes as a structural blueprint.
+### What each part does
+
+| Component | Input → output | Role | Time for a 3-min song |
+|---|---|---|---:|
+| **5Hz LM**, phase 1 ("thinking") | caption + lyrics → text in a `<think>` block | Fills in missing metadata: BPM, key, time signature, duration, vocal language, and an expanded caption. Skipped when these are given, as in our benchmark. | 0 s (skipped) |
+| **5Hz LM**, phase 2 (audio codes) | caption + lyrics + metadata → discrete tokens | Writes a coarse **plan of the song**: 5 tokens per second, each an index into a quantized audio vocabulary (FSQ). It works like a sketch of melody, rhythm and structure. Tokens are produced one at a time with classifier-free guidance (`lm_cfg_scale=2.0`, two forward passes per token), which is why this stage is slow. | ~30 s |
+| **Detokenizer** (in the DiT model) | 5 Hz codes → 25 Hz latents | Expands each code into 5 latent frames, so the plan has the same time resolution as the audio latents. | negligible |
+| **Qwen3-Embedding-0.6B** (caption) | caption tokens → 1024-d vectors | Runs the full text model on the **caption** (style, genre, instruments, mood), then a linear projector maps it to the DiT width (2048). | ~0.02 s |
+| **Qwen3 token embeddings** (lyrics) | lyric tokens → 1024-d vectors | **Lyrics do not go through the Qwen3 transformer.** Only its token-embedding lookup table is used, so at this point each token carries no context. | negligible |
+| **Lyric encoder** (8 transformer layers, in the DiT checkpoint) | lyric token vectors → contextual lyric vectors | The only place where lyrics are processed in context. It is trained together with the DiT. | negligible |
+| **Timbre encoder** | reference audio → timbre vectors | Optional voice/timbre reference. With no reference audio, it gets a silent placeholder. | negligible |
+| **Condition sequence** | lyric + timbre + caption vectors | The three are concatenated into one sequence that the DiT reads through cross-attention. | – |
+| **Context latents** | LM sketch, or silence latents | With the LM, the detokenized codes give the DiT a time-aligned outline of the song. Without it, the context is a silence latent, and all structure must come from the text. | – |
+| **DiT** (24 layers, hidden size 2048, turbo) | noise + context + conditions → audio latents | A diffusion transformer trained with flow matching. The turbo variant is distilled to **8 steps**. Each step refines the whole song at once (in parallel over time), which is why it is fast. | ~1.3 s |
+| **VAE decoder** | 64 × 25 Hz latents → 48 kHz stereo | Turns the compressed latents back into a waveform. It is tiled into chunks to save memory and dominates the non-LM time. | ~2.8 s |
+
+### With and without the LM
+
+| | Without LM (`thinking=False`) | With LM (`thinking=True`, default) |
+|---|---|---|
+| Where song structure comes from | DiT only, from the caption and lyrics | LM plan (codes) + DiT |
+| What the DiT receives as context | silence latents | detokenized LM codes |
+| Speed for a 3-min song | ~5 s | ~35 s |
+| Models in VRAM | DiT + encoders + VAE (6.4 GB) | + 1.7B LM (11.1 GB) |
+
+### Relevance for Experiment 1 (where to put hooks)
+
+The design proposal says "the model's text encoder". In ACE-Step 1.5, the representation that sees the **lyrics in context** is the **8-layer lyric encoder** (`AceStepConditionEncoder.lyric_encoder`). Qwen3-Embedding only processes the caption, and for lyrics it provides the token lookup table. The lyric encoder layers are therefore the natural place for activation hooks and LEACE. If artist names are kept out of the caption, the caption path should carry no artist information. The 5Hz LM, by contrast, reads the lyrics itself, so it holds its own, separate representation of them.
 
 ## Implications for the project
 
