@@ -20,6 +20,8 @@ from acestep.inference import GenerationConfig, GenerationParams, generate_music
 from acestep.llm_inference import LLMHandler
 from acestep.model_downloader import ensure_lm_model, ensure_main_model
 
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 
@@ -65,6 +67,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def synchronize() -> None:
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    elif DEVICE == "mps":
+        torch.mps.synchronize()
+
+
+def reset_peak_memory() -> None:
+    if DEVICE == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+
+
+def peak_memory_gb() -> float:
+    """Peak allocated memory on CUDA; on MPS (no peak counter) the driver-allocated memory after the run."""
+    if DEVICE == "cuda":
+        return torch.cuda.max_memory_allocated() / 1024**3
+    if DEVICE == "mps":
+        return torch.mps.driver_allocated_memory() / 1024**3
+    return 0.0
+
+
+def device_name() -> str:
+    return torch.cuda.get_device_name(0) if DEVICE == "cuda" else DEVICE
+
+
 def init_models(args: argparse.Namespace) -> tuple[AceStepHandler, LLMHandler]:
     ok, msg = ensure_main_model(CHECKPOINTS_DIR)
     if not ok:
@@ -74,8 +101,8 @@ def init_models(args: argparse.Namespace) -> tuple[AceStepHandler, LLMHandler]:
     status, ok = dit_handler.initialize_service(
         project_root=str(PROJECT_ROOT),
         config_path=args.config_path,
-        device="cuda",
-        use_flash_attention=dit_handler.is_flash_attention_available("cuda"),
+        device=DEVICE,
+        use_flash_attention=dit_handler.is_flash_attention_available(DEVICE),
         offload_to_cpu=args.offload_to_cpu,
     )
     if not ok:
@@ -91,7 +118,7 @@ def init_models(args: argparse.Namespace) -> tuple[AceStepHandler, LLMHandler]:
             checkpoint_dir=str(CHECKPOINTS_DIR),
             lm_model_path=args.lm_model,
             backend=args.lm_backend,
-            device="cuda",
+            device=DEVICE,
             offload_to_cpu=args.offload_to_cpu,
         )
         if not ok:
@@ -117,11 +144,11 @@ def run_once(dit_handler, llm_handler, args, duration: float, save_dir: Path, se
     )
     config = GenerationConfig(batch_size=args.batch_size, use_random_seed=False, seeds=[seed], audio_format="flac")
 
-    torch.cuda.synchronize()
-    torch.cuda.reset_peak_memory_stats()
+    synchronize()
+    reset_peak_memory()
     start = time.perf_counter()
     result = generate_music(dit_handler, llm_handler, params, config, save_dir=str(save_dir))
-    torch.cuda.synchronize()
+    synchronize()
     wall = time.perf_counter() - start
     if not result.success:
         raise RuntimeError(f"Generation failed: {result.error}")
@@ -131,7 +158,7 @@ def run_once(dit_handler, llm_handler, args, duration: float, save_dir: Path, se
         "wall_s": wall,
         "per_song_s": wall / args.batch_size,
         "rtf": wall / (duration * args.batch_size),  # < 1 means faster than real time
-        "peak_vram_gb": torch.cuda.max_memory_allocated() / 1024**3,
+        "peak_vram_gb": peak_memory_gb(),
         "time_costs": result.extra_outputs.get("time_costs", {}),
     }
 
@@ -175,7 +202,7 @@ def main() -> None:
     out_file.write_text(
         json.dumps(
             {
-                "gpu": torch.cuda.get_device_name(0),
+                "gpu": device_name(),
                 "torch": torch.__version__,
                 "args": {k: str(v) for k, v in vars(args).items()},
                 "model_load_s": load_s,
