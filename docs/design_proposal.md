@@ -18,9 +18,9 @@ Celem projektu jest zbadanie, czy liniowo dekodowalna reprezentacja tożsamości
 
 Projekt odpowiada na trzy pytania badawcze:
 
-* **RQ1 - Czy dekodowalność przewiduje kopiowanie?** Dla 50 artystów mierzymy dokładność sondy liniowej rozpoznającej artystę z aktywacji enkodera (bez podawania nazwy artysty) oraz odsetek odtworzonych utworów treningowych (regurgitation rate). Kopiowanie mierzymy dokładnym testem statystycznym z kontrolą FDR: podobieństwo wygenerowanych utworów do utworów treningowych porównujemy z podobieństwem do utworów nigdy niewidzianych przez model, dzięki czemu przypadkowe dopasowania nie są liczone jako kopiowanie. Miarą związku jest korelacja rang Spearmana między dokładnością sondy a odsetkiem kopiowania.
+* **RQ1 - Czy dekodowalność przewiduje kopiowanie?** Dla 50 artystów mierzymy dokładność sondy liniowej rozpoznającej artystę z aktywacji enkodera (bez podawania nazwy artysty) oraz wskaźnik podobieństwa do repertuaru referencyjnego (*similarity to reference set*). Utwory sprzed 2024 r. mają status **utworów o nieznanej przynależności treningowej** (*unconfirmed training status*). Kopiowanie mierzymy dokładnym testem statystycznym z kontrolą FDR: podobieństwo wygenerowanych utworów do utworów treningowych porównujemy z podobieństwem do utworów nigdy niewidzianych przez model, dzięki czemu przypadkowe dopasowania nie są liczone jako kopiowanie. Miarą związku jest korelacja rang Spearmana między dokładnością sondy a odsetkiem kopiowania.
 * **RQ2 - Czy reprezentację można wymazać?** Na wybranej warstwie stosujemy zamkniętą, liniową metodę wymazywania pojęć (LEACE). Sprawdzamy, czy (a) dokładność sondy spada do poziomu losowego, (b) spada imitacja artysty, mierzona odległością w przestrzeni embeddingów weryfikacyjnych między wygenerowanymi a prawdziwymi utworami artysty, oraz (c) jak bardzo spada jakość, mierzona automatycznym sędzią i krótkim odsłuchem w zespole.
-* **RQ3 - Czy reprezentacja przetrwa akcelerację?** Jeśli jest dostępna przyspieszona (np. destylowana) wersja modelu, powtarzamy na niej sondę, aby sprawdzić, czy akceleracja usuwa kierunek tożsamości artysty.
+* **RQ3 - Czy wymazywanie tożsamości artysty jest odporne na autorytatywne opisy tekstowe (CoT)?** Badamy, czy usunięcie tożsamości artysty metodą LEACE z enkodera liryki pozostaje skuteczne w sytuacji, gdy model ACE-Step generuje wewnętrzny opis muzyki (opis tekstowy / Chain-of-Thought). Porównujemy poziom imitacji i jakości nagrań przed i po interwencji w dwóch wariantach: z wyłączonym oraz włączonym modułem auto-opisu.
 
 **Kryterium falsyfikacji:** projekt uznajemy za obalony, jeśli dokładność sondy nie przewiduje kopiowania mierzonego dokładnym testem (brak istotnej korelacji), a wymazanie kierunku nie zmienia poziomu imitacji. Wynik negatywny również jest wartościowy: pokazuje, że dekodowalna tożsamość artysty nie jest mechanizmem odpowiedzialnym za kopiowanie.
 
@@ -37,16 +37,16 @@ Projekt odpowiada na trzy pytania badawcze:
 
 | Tydzień | Data | Zadania | Terminy |
 | -- | -- | -- | -- |
-| 1 | 12.10 - 18.10 | * Rozpisanie Design Proposal ✅<br>* Podział prac<br>* Przygotowanie środowiska <br>* Przygotowanie pliku z tabelaryczną analizą literatury zgodnie z wymogami projektu | * 14.10 - Wybór tematu projektu |
-| 2 | 19.10 - 25.10 | * Finalizacja i oddanie Design Proposal<br>* Uruchomienie ACE-Step z udostępnionymi wagami, pomiar czasu generacji jednego utworu na naszym GPU (szacunek budżetu obliczeniowego)<br>* Wybór kandydatów na artystów na podstawie list popularności (np. top 100 Last.fm) i daty wydania utworów (przed/po 2025 r.).<br>* Zebranie tekstów i metadanych dla pierwszych 20 artystów, podział na utwory treningowe i held-out<br>* Implementacja ekstrakcji aktywacji enkodera (hooki na warstwach) | * 21.10 - Oddanie Design Proposal |
-| 3 | 26.10 - 01.11 | * Reprodukcja sondy tożsamości artysty dla 20 artystów (przegląd warstw, wybór najlepszej)<br>* Generacja 50 utworów na artystę dla 20 artystów (ok. 4h)<br>* Implementacja copy score (podobieństwo tekstu i audio względem utworów treningowych i held-out)<br>* Integracja kodu dokładnych testów memoryzacji |  |
-| 4 | 02.11 - 08.11 | * Pierwsze porównanie rozkładów copy score: treningowe vs held-out<br>* Spisanie wyniku, który obaliłby projekt (kryterium falsyfikacji)<br>* Przygotowanie prototypu: notebook z sondą i pierwszym wynikiem testu kopiowania<br>* Przygotowanie prezentacji prototypu | * 04.11 - Zgłoszenie gotowości prototypu |
+| 1 | 12.10 - 18.10 | * Rozpisanie Design Proposal ✅<br>* Podział prac ✅<br>* Przygotowanie środowiska ✅<br>* Przygotowanie pliku z tabelaryczną analizą literatury zgodnie z wymogami projektu 🟡 | * 14.10 - Wybór tematu projektu ✅ |
+| 2 | 19.10 - 25.10 | * Finalizacja i oddanie Design Proposal ✅<br>* Uruchomienie ACE-Step z udostępnionymi wagami, pomiar czasu generacji jednego utworu na naszym GPU (szacunek budżetu obliczeniowego) ✅<br>* Wybór 20 artystów z list popularności. 🟡<br>* Zebranie metadanych i podział na zbiór referencyjny (utwory wydane < 2025 o nieznanej przynależności) oraz zbiór do walidacji (utwory wydane > 2025). 🟡<br>* Implementacja ekstrakcji aktywacji enkodera (hooki na warstwach) 🟡 | * 21.10 - Oddanie Design Proposal ✅ |
+| 3 | 26.10 - 01.11 | * Reprodukcja sondy tożsamości artysty dla 20 artystów (przegląd warstw, wybór najlepszej)<br>* Generacja 50 utworów na artystę dla 20 artystów (ok. 4h)<br>* Implementacja ekstrakcji embeddingów audio (CLEWS-DVI) w celu mierzenia wskaźnika podobieństwa względem repertuaru referencyjnego.<br>* Implementacja i przeprowadzenie mikro-treningu adaptera LoRA na zbiorze post-2025 (podział 50/50 na kontrolowany trening i held-out w celu zapewnienia wymienialności próbek dla testu zerowego).<br>* Integracja kodu dokładnych testów memoryzacji |  |
+| 4 | 02.11 - 08.11 | * Pierwsze porównanie rozkładów wskaźników podobieństwa: wariant bazowy oraz wariant po mikro-treningu LoRA.<br>* Spisanie wyniku, który obaliłby projekt (kryterium falsyfikacji)<br>* Przygotowanie prototypu: notebook z sondą i pierwszym wynikiem testu kopiowania<br>* Przygotowanie prezentacji prototypu | * 04.11 - Zgłoszenie gotowości prototypu |
 | 5 | 09.11 - 15.11 | * Prezentacja prototypu i uwzględnienie uwag prowadzącego<br>* Rozszerzenie zbioru danych do 50 artystów (teksty, metadane, splity)<br>* Generacja 50 utworów na artystę dla pozostałych 30 artystów (ok. 6h) | * 10.11 - Deadline na spotkanie z prezentacją prototypu |
-| 6 | 16.11 - 22.11 | * Trening sondy dla 50 artystów, dokładność per artysta <br>* Obliczenie odsetka kopiowania per artysta pod dokładnym testem z kontrolą FDR |  |
-| 7 | 23.11 - 29.11 | * Korelacja Spearmana dokładność sondy vs odsetek kopiowania<br>* Analizy kontrolne (liczba utworów treningowych artysty, gatunek) jako zmienne zakłócające<br>* **Wynik RQ1** |  |
+| 6 | 16.11 - 22.11 | * Trening sondy dla 50 artystów, dokładność per artysta <br>* Obliczenie wskaźnika podobieństwa do repertuaru referencyjnego per artysta przy użyciu Exact Null Test z kontrolą FDR. |  |
+| 7 | 23.11 - 29.11 | * Korelacja Spearmana: dokładność sondy a wskaźnik podobieństwa do repertuaru<br>* Analizy kontrolne (liczba utworów treningowych artysty, gatunek) jako zmienne zakłócające<br>* **Wynik RQ1** |  |
 | 8 | 30.11 - 06.12 | * Implementacja LEACE na wybranej warstwie<br>* Sanity check: dokładność sondy po wymazaniu spada do poziomu losowego<br>* Generacja utworów z wymazanym kierunkiem (ok. 8h) |  |
 | 9 | 07.12 - 13.12 | * Pomiar imitacji (embedding weryfikacyjny) przed i po wymazaniu<br>* Pomiar jakości: automatyczny sędzia + krótki odsłuch w zespole<br>* Krzywa kompromisu imitacja/jakość (różne warstwy)<br>* **Wynik RQ2** |  |
-| 10 | 14.12 - 20.12 | * **RQ3** - po dopracowaniu zakresu |  |
+| 10 | 14.12 - 20.12 | * Przeprowadzenie eksperymentu ablacyjnego CoT vs no-CoT (odpowiedź na RQ3).<br>* Generacja utworów z wymazanym kierunkiem LEACE przy włączonym module automatycznego opisu muzyki (CoT).<br>* Porównanie skuteczności wymazywania i jakości generacji między trybem z opisem a trybem bez opisu. |  |
 | 11 | 21.12 - 27.12 | * Finalne wykresy i tabele<br>* Szkic artykułu: wstęp, related work, metoda, setup eksperymentalny |  |
 | 12 | 28.12 - 03.01 | Przerwa świąteczna 🧑🏻‍🎄🎄&#10;(bufor na ewentualne opóźnione eksperymenty) |  |
 | 13 | 04.01 - 10.01 | * Pisanie i edycja paperu: wyniki, dyskusja, rekomendacje dla twórców modeli<br>* Wewnętrzna recenzja całości |  |
@@ -67,14 +67,15 @@ Realizacja projektu została podzielona na spójne bloki eksperymentalne, z któ
   4. Wyuczenie małego klasyfikatora (sondy liniowej - *linear probe*, np. regresji logistycznej z walidacją krzyżową) przewidującego etykietę artysty na podstawie aktywacji.
 * **Oczekiwany wynik:** Zidentyfikowanie warstwy lub warstw, w których dokładność klasyfikacji artysty (probe accuracy) jest najwyższa i statystycznie istotnie różna od losowej (random guess).
 
-### Eksperyment 2: Pomiary kopiowania z wykorzystaniem dokładnego testu zerowego (Exact Null Test)
+### Eksperyment 2: Pomiary podobieństwa z wykorzystaniem dokładnego testu zerowego (Exact Null Test) oraz walidacja LoRA
 
-* **Cel:** Ustalenie faktycznego wskaźnika odtwarzania danych treningowych (*regurgitation rate*) dla poszczególnych artystów.
+* **Cel:** Ustalenie obiektywnego wskaźnika podobieństwa wygenerowanych nagrań do repertuaru referencyjnego pod dokładną hipotezą zerową z korekcją FDR (Benjamini-Hochberg) oraz weryfikacja wymienialności próbek (*exchangeability*).
 * **Przebieg:**
   1. Wygenerowanie puli próbnej: 50 utworów dla każdego z 50 badanych artystów (łącznie 2500 utworów).
-  2. Ekstrakcja wektorów cech akustycznych (np. za pomocą modeli weryfikacyjnych CLEWS-DVI lub LAION-CLAP) z wygenerowanych utworów, oryginalnych utworów treningowych oraz oryginalnych utworów typu held-out.
-  3. Przeprowadzenie *Exact Null Test* zgodnie z metodologią z literatury bazowej - porównanie odległości wygenerowanego utworu od najbliższego sąsiada w zbiorze treningowym i w zbiorze held-out.
-  4. Wykorzystanie korekty wielokrotnego testowania (FDR Benjamini-Hochberg) do odrzucenia przypadkowych podobieństw wynikających jedynie z imitacji stylu, a nie uczenia się na pamięć.
+  2. Moduł referencyjny (heurystyczny): Ekstrakcja embeddingów (CLEWS-DVI / LAION-CLAP) z wygenerowanych utworów, zbioru referencyjnego (< 2025, nieznana przynależność) oraz zbioru held-out (> 2025).
+  3. **Eksperyment walidacyjny LoRA (kontrolowana ekspozycja):** Aby wyeliminować błąd braku wymienialności próbek ze względu na czas premiery, zamrażamy bazowy model i przeprowadzamy mikro-trening adaptera LoRA na nowym materiale (utwory wydane po 2025 r.), z ostrym, losowym podziałem 50/50 na utwory treningowe i held-out wewnątrz dyskografii danego artysty.
+  4. Przeprowadzenie *Exact Null Test*  na obu wariantach (referencyjnym oraz dostrojonym przez LoRA) zgodnie z metodologią z literatury bazowej - porównanie odległości wygenerowanego utworu od najbliższego sąsiada w zbiorze treningowym i w zbiorze held-out.
+  5. Wykorzystanie korekty wielokrotnego testowania (FDR Benjamini-Hochberg) do odrzucenia przypadkowych podobieństw wynikających jedynie z imitacji stylu, a nie uczenia się na pamięć.
 * **Oczekiwany wynik:** Wyznaczenie obiektywnego wskaźnika plagiatu (kopiowania) dla każdego z analizowanych artystów, zabezpieczonego przed błędami I rodzaju (Fałszywe Odkrycia).
 
 ### Eksperyment 3: Analiza korelacji (Odpowiedź na RQ1)
@@ -96,10 +97,15 @@ Realizacja projektu została podzielona na spójne bloki eksperymentalne, z któ
   4. Ewaluacja jakości wygenerowanej muzyki za pomocą zautomatyzowanych metryk jakości sygnału (np. FAD - Fréchet Audio Distance, jeśli czas pozwoli) oraz odsłuchu przez członków zespołu badawczego.
 * **Oczekiwany wynik:** Zbudowanie krzywej kompromisu (trade-off) imitacja/jakość. Zweryfikowanie, czy faktycznie można uzyskać co najmniej dwukrotny spadek wskaźnika plagiatu bez drastycznej degradacji brzmienia (sukces metody w architekturach audio-generatywnych).
 
-### Eksperyment 5: Analiza wpływu akceleracji (Odpowiedź na RQ3)
+### Eksperyment 5: Odporność wymazywania LEACE na generyczne opisy muzyczne CoT (Odpowiedź na RQ3)
 
-* **Decyzja:** Rezygnacja z eksperymentu oraz wykreślenie pytania badawczego RQ3 z celów projektu.
-* **Uzasadnienie:** Zgodnie z literaturą bazową, domyślnym modelem używanym w tych badaniach jest zoptymalizowany wariant `acestep-v15-turbo`. Ponieważ wykorzystywana architektura jest już docelowo po procesie akceleracji i nie istnieje obecnie jej szybsza (np. zdestylowana) wersja referencyjna, przeprowadzenie testów porównawczych weryfikujących wpływ kompresji na reprezentację tożsamości artysty jest technicznie niewykonalne.
+* **Cel:** Ocena, czy automatyczne generowanie opisów stylu muzycznego przez wbudowany w ACE-Step moduł językowy wpływa na skuteczność interwencji metodą LEACE w enkoderze tekstowym.
+* **Przebieg:**
+  1. Wygenerowanie próbek audio dla badanych artystów z wykorzystaniem metody LEACE w dwóch trybach inferencji:
+     * Tryb A: z wyłączonym modułem auto-opisów (*no-CoT*).
+     * Tryb B: z włączonym automatycznym tworzeniem opisu muzyki (*with CoT*).
+  2. Pomiar spadku imitacji artysty (w przestrzeni embeddingów weryfikacyjnych) oraz ewaluacja jakości brzmienia dla obu trybów.
+* **Oczekiwany wynik:** Ustalenie, czy dodatkowa reprezentacja tekstowa generowana przez model "omija" interwencję na enkoderze liryki, czy też metoda LEACE zachowuje swoją skuteczność niezależnie od konfiguracyjnych trybów inferencji.
 
 # Planowana funkcjonalność programu
 
