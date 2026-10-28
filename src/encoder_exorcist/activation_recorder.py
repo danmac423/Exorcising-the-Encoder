@@ -91,11 +91,13 @@ class ActivationRecorder:
     def _record_once(self, key: str, vec: np.ndarray, warn_repeat: bool = True) -> None:
         """Store `vec` under `key` unless that key already has one (the first call wins).
 
-        A repeated call is remembered for a warning in `_build_record` when `warn_repeat` is set; hook points whose
-        repeats are expected and identical (K/V, condition_embedder) pass False.
+        A repeated call that produced a different vector is remembered for a warning in `_build_record` when
+        `warn_repeat` is set (identical repeats are harmless, e.g. the handler and `generate_audio` both run the
+        condition encoder on the same inputs); hook points whose repeats are expected (K/V, condition_embedder)
+        pass False.
         """
         if key in self._once:
-            if warn_repeat:
+            if warn_repeat and not np.array_equal(self._once[key], vec):
                 self._repeated.add(key)
             return
         self._once[key] = vec
@@ -208,7 +210,7 @@ class ActivationRecorder:
 
         Keys: the five stream vectors [d], lyric_layers [n_layers, d], kv [n_dit, 2, d_kv], dit [n_dit, 3, steps, d]
         (points in DIT_POINTS order) and dit_layers. Raises RuntimeError if a hook point never fired or the DiT points
-        fired a different number of times; logs a warning if a once-per-song point fired more than once.
+        fired a different number of times; logs a warning if a once-per-song point fired again with a different value.
         """
         lyric_keys = sorted((k for k in self._once if k.startswith("lyric_L")), key=lambda k: int(k[len("lyric_L") :]))
         expected = [*STREAM_KEYS, *[f"{kv}_{i}" for i in DIT_LAYERS for kv in "kv"]]
@@ -224,7 +226,10 @@ class ActivationRecorder:
             counts = {f"{i}:{p}": len(v) for (i, p), v in self._dit.items()}
             raise RuntimeError(f"DiT hook points fired a different number of times: {counts}")
         if self._repeated:
-            logger.warning("hook points fired more than once, only the first call was kept: %s", sorted(self._repeated))
+            logger.warning(
+                "hook points fired again with a different value, only the first call was kept: %s",
+                sorted(self._repeated),
+            )
 
         record = {key: self._once[key] for key in STREAM_KEYS}
         record["lyric_layers"] = np.stack([self._once[k] for k in lyric_keys])

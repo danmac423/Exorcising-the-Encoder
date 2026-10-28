@@ -99,7 +99,7 @@ Register shape-recording hooks, generate one 180 s song with `bpm=None, key=None
 - last dim is 2048 everywhere except `k`/`v` (1024);
 - `k`/`v` fire once per layer; `pre_xattn`/`xattn_out`/`post_xattn` fire 8 times per layer;
 - `T_aud == 2250`; if not, the 25 Hz assumption is wrong;
-- `lyric_out`, `merged_out` fire once (if more, e.g. cover/non-cover re-encode, decide which call to keep);
+- `lyric_out`, `merged_out` fire twice on the real model (the handler pre-computes the conditioning, then `generate_audio` recomputes it) with identical output; the recorder keeps the first call and only warns if a repeat differs;
 - `T_cond == T_lyr + T_timbre + T_txt`, and the merged mask is all ones (the guard in `merged_out` enforces it; check it in with-CoT too);
 - `AceStepHandler` generation reaches the same denoising loop as `generate_audio` (not verified).
 

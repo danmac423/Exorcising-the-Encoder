@@ -237,7 +237,19 @@ def test_repeated_encoder_call_keeps_first(model: FakeModel, caplog: pytest.LogC
         assert np.array_equal(recorder._once["lyric_out"], first_lyric)
         with caplog.at_level("WARNING"):
             recorder.pop_song()
-    assert "more than once" in caplog.text
+    assert "different value" in caplog.text
+
+
+def test_identical_repeated_encoder_call_is_silent(model: FakeModel, caplog: pytest.LogCaptureFixture) -> None:
+    recorder = ActivationRecorder()
+    with torch.no_grad(), recorder.attach(model):
+        torch.manual_seed(1)
+        model.generate(LYRIC_MASK)
+        torch.manual_seed(1)
+        model.generate(LYRIC_MASK)
+        with caplog.at_level("WARNING"):
+            recorder.pop_song()
+    assert caplog.text == ""
 
 
 def test_save_song_roundtrip(model: FakeModel, tmp_path) -> None:
