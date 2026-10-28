@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 import pytest
 import torch
@@ -18,7 +20,7 @@ class FakeLyricEncoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList([nn.Linear(D, D) for _ in range(N_LYRIC_LAYERS)])
 
-    def forward(self, inputs_embeds, attention_mask=None):
+    def forward(self, inputs_embeds, attention_mask=None):  # ty: ignore[invalid-mutable-override]
         x = inputs_embeds
         for layer in self.layers:
             x = layer(x)
@@ -26,7 +28,7 @@ class FakeLyricEncoder(nn.Module):
 
 
 class FakeTimbreEncoder(nn.Module):
-    def forward(self, packed, order_mask):
+    def forward(self, packed, order_mask):  # ty: ignore[invalid-mutable-override]
         return torch.zeros(1, 1, D), torch.ones(1, 1, dtype=torch.long)
 
 
@@ -37,7 +39,7 @@ class FakeEncoder(nn.Module):
         self.lyric_encoder = FakeLyricEncoder()
         self.timbre_encoder = FakeTimbreEncoder()
 
-    def forward(self, text_hidden_states, text_attention_mask, lyric_hidden_states, lyric_attention_mask):
+    def forward(self, text_hidden_states, text_attention_mask, lyric_hidden_states, lyric_attention_mask):  # ty: ignore[invalid-mutable-override]
         text = self.text_projector(text_hidden_states)
         lyric = self.lyric_encoder(inputs_embeds=lyric_hidden_states, attention_mask=lyric_attention_mask)
         timbre, timbre_mask = self.timbre_encoder(None, None)
@@ -54,7 +56,7 @@ class FakeCrossAttn(nn.Module):
         self.v_proj = nn.Linear(D, KV)
         self.o = nn.Linear(KV, D)
 
-    def forward(self, hidden_states, encoder_hidden_states):
+    def forward(self, hidden_states, encoder_hidden_states):  # ty: ignore[invalid-mutable-override]
         k, v = self.k_proj(encoder_hidden_states), self.v_proj(encoder_hidden_states)
         return self.o(k.mean(1, keepdim=True) + v.mean(1, keepdim=True)).expand_as(hidden_states) + self.q(
             hidden_states
@@ -68,7 +70,7 @@ class FakeDiTLayer(nn.Module):
         self.cross_attn = FakeCrossAttn()
         self.mlp_norm = nn.LayerNorm(D)
 
-    def forward(self, hidden_states, encoder_hidden_states):
+    def forward(self, hidden_states, encoder_hidden_states):  # ty: ignore[invalid-mutable-override]
         out, _ = self.cross_attn(self.cross_attn_norm(hidden_states), encoder_hidden_states)
         hidden_states = hidden_states + out
         return hidden_states + self.mlp_norm(hidden_states)
@@ -80,7 +82,7 @@ class FakeDecoder(nn.Module):
         self.condition_embedder = nn.Linear(D, D)
         self.layers = nn.ModuleList([FakeDiTLayer() for _ in range(N_DIT_LAYERS)])
 
-    def forward(self, hidden_states, encoder_hidden_states):
+    def forward(self, hidden_states, encoder_hidden_states):  # ty: ignore[invalid-mutable-override]
         for _ in range(N_STEPS):
             cond = self.condition_embedder(encoder_hidden_states)
             x = hidden_states
@@ -111,6 +113,10 @@ class FakeModel(nn.Module):
 
 LYRIC_MASK = torch.ones(1, T_LYR, dtype=torch.long)
 LAYERS = DIT_LAYERS
+
+
+def dit_layer(model: FakeModel, i: int) -> FakeDiTLayer:
+    return cast(FakeDiTLayer, model.decoder.layers[i])
 
 
 @pytest.fixture
@@ -161,7 +167,7 @@ def test_merged_stream_and_kv_are_means_over_all_tokens(model: FakeModel) -> Non
     np.testing.assert_allclose(record["merged_out"], states[0].mean(0).numpy(), rtol=1e-5)
 
     cond = model.decoder.condition_embedder(states)
-    k = model.decoder.layers[LAYERS[0]].cross_attn.k_proj(cond)[0].mean(0)
+    k = dit_layer(model, LAYERS[0]).cross_attn.k_proj(cond)[0].mean(0)
     np.testing.assert_allclose(record["kv"][0, 0], k.detach().numpy(), rtol=1e-4, atol=1e-6)
 
 
@@ -180,7 +186,7 @@ def test_cond_embed_is_affine_image_of_merged(model: FakeModel) -> None:
 
 def test_dit_points_match_layer_tensors(model: FakeModel) -> None:
     captured = {"pre": [], "post": []}
-    layer = model.decoder.layers[LAYERS[2]]
+    layer = dit_layer(model, LAYERS[2])
     layer.cross_attn_norm.register_forward_pre_hook(lambda m, a: captured["pre"].append(a[0].mean(1)[0]))
     layer.mlp_norm.register_forward_pre_hook(lambda m, a: captured["post"].append(a[0].mean(1)[0]))
     record = record_song(model, ActivationRecorder())
