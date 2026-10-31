@@ -9,6 +9,12 @@ few songs in either set are skipped and the next one from the pool is used, unti
 Artists that released little recently (e.g. older bands) are therefore often skipped; raise --pool-multiplier if a
 genre ends up short.
 
+Titles are deduplicated with fuzzy matching (difflib), so a song and its remaster/re-release is kept only once:
+  - test set: a song is skipped if a similar title is already chosen for that artist
+  - held-out set: a song is skipped if a similar title exists anywhere in the artist's earlier discography on Genius
+    (released up to --heldout-after, or with an unknown date) or is already chosen for that artist
+Version tags like "(2012 Remaster)", "[From The Vault]" or "- Radio Edit" are ignored when comparing titles.
+
 Lyrics are saved to one file per genre and set (outputs/lyrics_<genre>.csv for the test set and
 outputs/lyrics_heldout_<genre>.csv for the held-out set); skipped artists go to outputs/skipped_artists.csv.
 The script is resumable: artists already saved or skipped are not fetched again.
@@ -23,10 +29,12 @@ Usage:
 
 import argparse
 import csv
+import difflib
 import os
 import random
 import re
 import time
+import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -82,6 +90,12 @@ def parse_args() -> argparse.Namespace:
         default=date(2025, 1, 31),
         help="Held-out set: songs released after this date, YYYY-MM-DD",
     )
+    parser.add_argument(
+        "--title-similarity",
+        type=float,
+        default=0.9,
+        help="Titles at least this similar (0-1, difflib ratio) count as the same song",
+    )
     parser.add_argument("--pool-multiplier", type=int, default=2, help="Last.fm pool size = multiplier x --n-artists")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "outputs")
     return parser.parse_args()
@@ -98,6 +112,50 @@ def top_artists_for_tag(api_key: str, tag: str, limit: int) -> list[str]:
     if "error" in data:
         raise RuntimeError(f"Last.fm error {data['error']}: {data['message']}")
     return [artist["name"] for artist in data["topartists"]["artist"]]
+
+
+VERSION_TAG_RE = re.compile(r"\([^)]*\)|\[[^\]]*\]|\s-\s.*$")  # "(2012 Remaster)", "[Live]", " - Radio Edit"
+SHORT_TITLE_LEN = 5  # titles this short must match exactly, fuzzy matching is too loose for them
+
+
+def normalize_title(title: str) -> str:
+    """Lowercase title without version tags, accents and punctuation."""
+
+    def clean(text: str) -> str:
+        text = "".join(char for char in unicodedata.normalize("NFKD", text) if not unicodedata.combining(char))
+        return re.sub(r"[\W_]+", " ", text.lower()).strip()
+
+    return clean(VERSION_TAG_RE.sub(" ", title)) or clean(title)
+
+
+def titles_match(first: str, second: str, threshold: float) -> bool:
+    """Compares two normalized titles."""
+    if first == second:
+        return True
+    if min(len(first), len(second)) <= SHORT_TITLE_LEN:
+        return False
+    if re.findall(r"\d+", first) != re.findall(r"\d+", second):  # "Song Pt. 1" vs "Song Pt. 2"
+        return False
+    return difflib.SequenceMatcher(None, first, second).ratio() >= threshold
+
+
+class TitleDeduplicator:
+    """Remembers the titles of one artist and tells whether a new title is a duplicate of any of them."""
+
+    def __init__(self, threshold: float):
+        self.threshold = threshold
+        self.seen: list[str] = []
+
+    def reset(self, known_titles: list[str]) -> None:
+        self.seen = [normalize_title(title) for title in known_titles]
+
+    def is_new(self, title: str) -> bool:
+        """True (and remembers the title) if no similar title was seen before."""
+        normalized = normalize_title(title)
+        if any(titles_match(normalized, seen, self.threshold) for seen in self.seen):
+            return False
+        self.seen.append(normalized)
+        return True
 
 
 def release_year(song: dict) -> int | None:
@@ -120,7 +178,11 @@ def released_after(song: dict, cutoff: date) -> bool:
 
 
 def build_genius(
-    access_token: str, after: date | None, max_year: int | None, extra_excluded_words: list[str] | None = None
+    access_token: str,
+    after: date | None,
+    max_year: int | None,
+    deduplicator: TitleDeduplicator,
+    extra_excluded_words: list[str] | None = None,
 ) -> lyricsgenius.Genius:
     # Throttled on purpose: pause between requests, time out, retry with backoff
     # Not subclassed: lyricsgenius only sends the token when the class is named "Genius"
@@ -142,22 +204,37 @@ def build_genius(
         and release_year(song) is not None
         and (after is None or released_after(song, after))
         and (max_year is None or release_year(song) <= max_year)
+        # last on purpose: a title is remembered only if the song passed every other check
+        and deduplicator.is_new(song["title"])
     )
     return genius
 
 
-def fetch_artist_songs(genius: lyricsgenius.Genius, artist_name: str, genre: str, n_songs: int) -> list[dict] | None:
-    """Returns the artist's most popular valid songs, or None if the artist is not found on Genius."""
+def fetch_artist_songs(
+    genius: lyricsgenius.Genius,
+    deduplicator: TitleDeduplicator,
+    artist_name: str,
+    genre: str,
+    n_songs: int,
+    known_titles: list[str] | None = None,
+    artist_id: int | None = None,
+) -> tuple[list[dict], int] | None:
+    """Returns the artist's most popular valid songs and the Genius artist id, or None if the artist is not found.
+
+    Songs similar to `known_titles` or to each other are skipped by the deduplicator.
+    """
+    deduplicator.reset(known_titles or [])
     artist = genius.search_artist(
         artist_name,
         max_songs=n_songs,
         sort="popularity",
         get_full_info=False,
         allow_name_change=False,
+        artist_id=artist_id,
     )
     if artist is None:
         return None
-    return [
+    rows = [
         {
             "genre": genre,
             "artist": artist_name,
@@ -169,6 +246,17 @@ def fetch_artist_songs(genius: lyricsgenius.Genius, artist_name: str, genre: str
         }
         for song in artist.songs
     ]
+    return rows, artist._body["id"]
+
+
+def fetch_discography(genius: lyricsgenius.Genius, artist_id: int, max_pages: int = 20) -> list[dict]:
+    """Returns metadata (no lyrics) of all the artist's songs on Genius, up to max_pages x 50 songs."""
+    songs, page = [], 1
+    while page and page <= max_pages:
+        response = genius.artist_songs(artist_id, per_page=50, page=page, sort="popularity")
+        songs += response["songs"]
+        page = response.get("next_page")
+    return songs
 
 
 def lyrics_path(output_dir: Path, genre: str, heldout: bool = False) -> Path:
@@ -195,9 +283,14 @@ def main() -> None:
     load_dotenv(PROJECT_ROOT / ".env", override=True)
     lastfm_key = os.environ["LASTFM_API_KEY"]
     token = os.environ["GENIUS_ACCESS_TOKEN"]
-    test_genius = build_genius(token, after=None, max_year=args.max_release_year)
+    test_dedup, heldout_dedup = TitleDeduplicator(args.title_similarity), TitleDeduplicator(args.title_similarity)
+    test_genius = build_genius(token, after=None, max_year=args.max_release_year, deduplicator=test_dedup)
     heldout_genius = build_genius(
-        token, after=args.heldout_after, max_year=None, extra_excluded_words=HELDOUT_EXCLUDED_TITLE_WORDS
+        token,
+        after=args.heldout_after,
+        max_year=None,
+        deduplicator=heldout_dedup,
+        extra_excluded_words=HELDOUT_EXCLUDED_TITLE_WORDS,
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -225,14 +318,23 @@ def main() -> None:
             print(f"{genre}: {artist_name}")
             try:
                 reason = None
-                artist_test = fetch_artist_songs(test_genius, artist_name, genre, args.test_songs)
-                if artist_test is None:
+                test_result = fetch_artist_songs(test_genius, test_dedup, artist_name, genre, args.test_songs)
+                if test_result is None:
                     reason = "not found on Genius"
-                elif len(artist_test) < args.test_songs:
-                    reason = f"only {len(artist_test)} valid songs up to {args.max_release_year}"
+                elif len(test_result[0]) < args.test_songs:
+                    reason = f"only {len(test_result[0])} valid songs up to {args.max_release_year}"
                 else:  # fetch held-out songs only for artists that already qualify for the test set
+                    artist_test, artist_id = test_result
                     time.sleep(random.uniform(2, 5))
-                    artist_heldout = fetch_artist_songs(heldout_genius, artist_name, genre, args.heldout_songs)
+                    # held-out songs must not repeat anything from the artist's earlier discography
+                    history = [
+                        song["title"]
+                        for song in fetch_discography(heldout_genius, artist_id)
+                        if not released_after(song, args.heldout_after)
+                    ]
+                    artist_heldout, _ = fetch_artist_songs(
+                        heldout_genius, heldout_dedup, artist_name, genre, args.heldout_songs, history, artist_id
+                    )
                     if len(artist_heldout) < args.heldout_songs:
                         reason = f"only {len(artist_heldout)} valid songs after {args.heldout_after}"
             except Exception as error:  # noqa: BLE001 (network error: not skipped, retried on the next run)
