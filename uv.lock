@@ -203,6 +203,19 @@ wheels = [
 ]
 
 [[package]]
+name = "beautifulsoup4"
+version = "4.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "soupsieve" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/65/318323f98dbee45d42dff61d8f047181bc6f2268a9068cfad035a46be5af/beautifulsoup4-4.15.0.tar.gz", hash = "sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7", size = 632571, upload-time = "2026-06-07T16:44:20.453Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl", hash = "sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9", size = 109924, upload-time = "2026-06-07T16:44:21.566Z" },
+]
+
+[[package]]
 name = "brotli"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -578,6 +591,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ace-step" },
+    { name = "lyricsgenius" },
+    { name = "python-dotenv" },
+    { name = "requests" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'win32'" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "torch", version = "2.12.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
@@ -601,6 +617,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ace-step", git = "https://github.com/ace-step/ACE-Step-1.5?rev=ca1e85fe9430179831e6bc6be790c332190a3866" },
+    { name = "lyricsgenius", specifier = ">=3.15.0" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
+    { name = "requests", specifier = ">=2.34.2" },
     { name = "torch", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=2.9.1" },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==2.10.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torch", marker = "sys_platform == 'win32'", specifier = "==2.7.1+cu128", index = "https://download.pytorch.org/whl/cu128" },
@@ -1055,6 +1074,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f5/15/f79fcd98093bf769c2f6ec3a20d0114e2582f26a27193366501d7392e5f8/lycoris_lora-4.1.3.tar.gz", hash = "sha256:f211956f6fef04607cb4bc156a28adde86243d80065f1ee5e4def6f86e214880", size = 221424, upload-time = "2026-10-19T21:26:21.585Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/57/e7cf9e3a9834810c005f8ebce8770cef47492f9636fd68b14297c0bb994f/lycoris_lora-4.1.3-py3-none-any.whl", hash = "sha256:f7ccb7a1bf3c46745cce97a33ce3d443549a1c45e4e8626a408cc7da653dad7b", size = 289085, upload-time = "2026-10-19T21:26:19.701Z" },
+]
+
+[[package]]
+name = "lyricsgenius"
+version = "3.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/24/6c64965d74e6758cd5d1ca0c2dff4a5a096a55182cf4d64c2a04d27bc971/lyricsgenius-3.15.0.tar.gz", hash = "sha256:e49fc72e6d90441249e1c4c7cb273c6c04bc2fb2e66c41817f4bfa491ff09eb3", size = 526893, upload-time = "2026-10-09T04:42:34.924Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/72/2f4e61aca119ce8fe35d396be6056cdb7068efc66709a6ef0cb3ddc109ed/lyricsgenius-3.15.0-py3-none-any.whl", hash = "sha256:dc4cd28403962b35c2dcbb78f7297df0ef889300c193664e5e359cfd1298ff32", size = 52196, upload-time = "2026-10-09T04:42:33.357Z" },
 ]
 
 [[package]]
@@ -2275,6 +2307,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/34/c9e80783d83eab739a9531fdee03675d53e0bf1b2ccb4bb3af5844675046/soundfile-0.14.0-py2.py3-none-win32.whl", hash = "sha256:0a6ae43c50c71b4e020cc55382925cb89451c1ed1a0c3d0f5d802da269226849", size = 902199, upload-time = "2026-06-06T08:58:43.289Z" },
     { url = "https://files.pythonhosted.org/packages/ed/97/b39c18ac1df45e755ca22b8b00e872929da5d107998a207a5e4ac831bfda/soundfile-0.14.0-py2.py3-none-win_amd64.whl", hash = "sha256:299491d3499460fb1b74bb4bd78b57ffc2d243a5fafa7b6ec1b264875c78453e", size = 1021480, upload-time = "2026-06-06T08:58:45.016Z" },
     { url = "https://files.pythonhosted.org/packages/f4/83/55c65e61cf457805ce2ec157c1c6ae17715d0851aa2374422de0538838ca/soundfile-0.14.0-py2.py3-none-win_arm64.whl", hash = "sha256:e090704718e124e7c844695236f1fce8d18a5e761eaf7c82dfcd124620805f98", size = 888858, upload-time = "2026-06-06T08:58:46.593Z" },
+]
+
+[[package]]
+name = "soupsieve"
+version = "3.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/63/0b6bae54546aed98d72f12d09df57b19a287f01c84d22047fa2e23772ab9/soupsieve-3.0.4.tar.gz", hash = "sha256:924fab84ae21604c19e175e1f39815eb6fa83ba23836e09e9de180925e5bc4c0", size = 119017, upload-time = "2026-10-22T00:45:26.362Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/66/473f7ca0be0b06e38ee8c85ee2db184e3981bd769fac2e7c19c8a8865211/soupsieve-3.0.4-py3-none-any.whl", hash = "sha256:8412826614f9c632227067d0985aeb9f584bd15efc852955430e097a9fe7afbf", size = 42458, upload-time = "2026-10-22T00:45:24.843Z" },
 ]
 
 [[package]]
