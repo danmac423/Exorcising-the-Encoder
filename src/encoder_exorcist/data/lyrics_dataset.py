@@ -74,7 +74,7 @@ class DatasetConfig:
     test_songs: int = 5  # songs per artist in the test set
     heldout_songs: int = 5  # songs per artist in the held-out set
     test_before: date = date(2025, 1, 1)  # test set: songs released before this date
-    heldout_after: date = date(2025, 1, 31)  # held-out set: songs released after this date
+    heldout_after: date = date(2026, 1, 31)  # held-out set: songs released after this date
     title_similarity: float = 0.9  # titles at least this similar (0-1, difflib ratio) are the same song
     pool_multiplier: int = 2  # Last.fm pool size = pool_multiplier x n_artists
     output_dir: Path = PROJECT_ROOT / "outputs"
@@ -293,9 +293,7 @@ def load_records(path: Path) -> list[dict]:
 
 def save_records(path: Path, fields: list[str], records: list[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(
-            file, fieldnames=fields, extrasaction="ignore"
-        )  # drops columns removed since an older run
+        writer = csv.DictWriter(file, fieldnames=fields, extrasaction="ignore")  # drops columns removed since an older run
         writer.writeheader()
         writer.writerows(records)
 
@@ -313,9 +311,7 @@ class DatasetBuilder:
             after=config.heldout_after,
             extra_excluded_words=HELDOUT_EXCLUDED_TITLE_WORDS,
         )
-        self.skipped_path = (
-            config.output_dir / f"skipped_artists_{config.test_songs}test_{config.heldout_songs}heldout.csv"
-        )
+        self.skipped_path = config.output_dir / f"skipped_artists_{config.test_songs}test_{config.heldout_songs}heldout.csv"
 
     def run(self) -> None:
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -378,11 +374,7 @@ class DatasetBuilder:
         # Held-out songs are fetched only for artists that already qualify for the test set
         time.sleep(random.uniform(2, 5))
         # They must not repeat anything from the artist's earlier discography
-        history = [
-            song["title"]
-            for song in self.heldout_fetcher.discography(artist_id)
-            if not released_after(song, config.heldout_after)
-        ]
+        history = [song["title"] for song in self.heldout_fetcher.discography(artist_id) if not released_after(song, config.heldout_after)]
         heldout_result = self.heldout_fetcher.fetch(artist_name, genre, config.heldout_songs, history, artist_id)
         heldout_rows = heldout_result[0] if heldout_result else []
         if len(heldout_rows) < config.heldout_songs:
