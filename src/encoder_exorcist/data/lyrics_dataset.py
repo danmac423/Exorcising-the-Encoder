@@ -293,7 +293,9 @@ def load_records(path: Path) -> list[dict]:
 
 def save_records(path: Path, fields: list[str], records: list[dict]) -> None:
     with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fields, extrasaction="ignore")  # drops columns removed since an older run
+        writer = csv.DictWriter(
+            file, fieldnames=fields, extrasaction="ignore"
+        )  # drops columns removed since an older run
         writer.writeheader()
         writer.writerows(records)
 
@@ -311,7 +313,9 @@ class DatasetBuilder:
             after=config.heldout_after,
             extra_excluded_words=HELDOUT_EXCLUDED_TITLE_WORDS,
         )
-        self.skipped_path = config.output_dir / f"skipped_artists_{config.test_songs}test_{config.heldout_songs}heldout.csv"
+        self.skipped_path = (
+            config.output_dir / f"skipped_artists_{config.test_songs}test_{config.heldout_songs}heldout.csv"
+        )
 
     def run(self) -> None:
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -374,7 +378,11 @@ class DatasetBuilder:
         # Held-out songs are fetched only for artists that already qualify for the test set
         time.sleep(random.uniform(2, 5))
         # They must not repeat anything from the artist's earlier discography
-        history = [song["title"] for song in self.heldout_fetcher.discography(artist_id) if not released_after(song, config.heldout_after)]
+        history = [
+            song["title"]
+            for song in self.heldout_fetcher.discography(artist_id)
+            if not released_after(song, config.heldout_after)
+        ]
         heldout_result = self.heldout_fetcher.fetch(artist_name, genre, config.heldout_songs, history, artist_id)
         heldout_rows = heldout_result[0] if heldout_result else []
         if len(heldout_rows) < config.heldout_songs:
