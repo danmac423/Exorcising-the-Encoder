@@ -9,8 +9,10 @@ from encoder_exorcist.data.anonymization import (
     MusicBrainzClient,
     PhoneticSubstitutor,
     build_terms,
+    load_overrides,
     match_case,
     name_key,
+    override_key,
     save_records,
     stress_key,
     strip_accents,
@@ -154,7 +156,7 @@ class TestAnonymizer:
     def test_name_is_replaced_and_counted(self, anonymizer):
         text, replaced = anonymizer.anonymize("Drake", "Drake got the keys\nI said Drake twice")
         assert text == "Break got the keys\nI said Break twice"
-        assert replaced == {("drake", "break", False): 2}
+        assert replaced == {("drake", "break", "cmudict"): 2}
 
     def test_phrase_matches_in_any_case_and_across_a_hyphen_or_space(self, anonymizer):
         text, _ = anonymizer.anonymize("Linkin Park", "LINKIN PARK, linkin-park")
@@ -204,7 +206,7 @@ class TestAnonymizer:
 
     def test_approximate_replacements_are_flagged(self, anonymizer):
         _, replaced = anonymizer.anonymize("Linkin Park", "Linkin Park")
-        assert all(approximate for _, _, approximate in replaced)
+        assert [source for _, _, source in replaced] == ["g2p"]
 
 
 MB_SEARCH = {
@@ -317,8 +319,9 @@ class TestLyricsAnonymizer:
         assert "no name" in anonymized
         assert not (tmp_path / "anonymized" / "skipped_artists_2test_0heldout.csv").exists()
         report = (tmp_path / "anonymized" / "replacements.csv").read_text()
-        assert report.splitlines()[0] == "artist,original,replacement,count,approximate"
+        assert report.splitlines()[0] == "artist,original,replacement,count,source"
         assert "Drake,drake," in report
+        assert report.splitlines()[1].endswith(",cmudict")
 
     def test_original_files_are_not_modified(self, tmp_path):
         self.write_lyrics(tmp_path)
@@ -336,3 +339,82 @@ class TestLyricsAnonymizer:
     def test_no_lyrics_files(self, tmp_path):
         with pytest.raises(SystemExit, match="make data"):
             LyricsAnonymizer(AnonymizationConfig(output_dir=tmp_path)).run()
+
+
+class TestOverrides:
+    @pytest.fixture
+    def terms(self) -> dict[str, list[str]]:
+        return {"Kanye West": ["Kanye West", "Kanye", "West"]}
+
+    def make(self, substitutor, terms, overrides) -> Anonymizer:
+        return Anonymizer(terms, substitutor, overrides)
+
+    def test_override_key_ignores_case_accents_and_punctuation(self):
+        assert override_key("Tyler, The  Creator") == "tyler the creator"
+        assert override_key("Beyoncé") == "beyonce"
+
+    def test_word_override_beats_the_automatic_choice(self, substitutor, terms):
+        anonymizer = self.make(substitutor, terms, {"kanye": "Kon-yay"})
+        text, replaced = anonymizer.anonymize("Kanye West", "Kanye said hi")
+        assert text == "Kon-yay said hi"
+        assert replaced == {("kanye", "kon-yay", "override"): 1}
+
+    def test_override_takes_the_case_of_the_name_without_changing_its_inner_capitals(self, substitutor, terms):
+        anonymizer = self.make(substitutor, terms, {"kanye": "McYay"})
+        assert anonymizer.anonymize("Kanye West", "Kanye")[0] == "McYay"
+        assert anonymizer.anonymize("Kanye West", "KANYE")[0] == "MCYAY"
+
+    def test_keys_are_case_and_accent_insensitive(self, substitutor):
+        anonymizer = self.make(substitutor, {"Beyoncé": ["Beyoncé", "Beyonce"]}, {"BEYONCÉ": "bee"})
+        assert anonymizer.anonymize("Beyoncé", "Beyoncé and Beyonce")[0] == "Bee and Bee"
+
+    def test_whole_name_override_beats_its_words(self, substitutor, terms):
+        anonymizer = self.make(substitutor, terms, {"kanye": "one", "kanye west": "two three"})
+        assert anonymizer.anonymize("Kanye West", "Kanye West and Kanye")[0] == "Two three and One"
+
+    def test_word_override_applies_inside_a_phrase_and_the_rest_is_automatic(self, substitutor, terms):
+        anonymizer = self.make(substitutor, terms, {"kanye": "one"})
+        text, replaced = anonymizer.anonymize("Kanye West", "kanye west")
+        assert text.startswith("one ")
+        assert text != "one west"
+        assert [source for _, _, source in replaced] == ["override"]
+
+    def test_override_works_for_words_the_dictionary_does_not_know(self, substitutor, terms):
+        anonymizer = self.make(substitutor, terms, {"kanye": "candy"})
+        assert anonymizer.anonymize("Kanye West", "Kanye")[0] == "Candy"
+
+    def test_tracks_which_overrides_were_used(self, substitutor, terms):
+        anonymizer = self.make(substitutor, terms, {"kanye": "one", "nobody": "two"})
+        anonymizer.anonymize("Kanye West", "Kanye")
+        assert anonymizer.used_overrides == {"kanye"}
+
+    def test_override_is_not_applied_to_a_word_outside_the_artists_terms(self, substitutor):
+        anonymizer = self.make(substitutor, {"Drake": ["Drake"]}, {"hello": "bye"})
+        assert anonymizer.anonymize("Drake", "Hello Drake")[0].startswith("Hello ")
+
+    def test_load_overrides(self, tmp_path):
+        path = tmp_path / "overrides.json"
+        assert load_overrides(path) == {}
+        path.write_text('{"kanye": " candy "}')
+        assert load_overrides(path) == {"kanye": "candy"}
+
+    @pytest.mark.parametrize("content", ["{not json", '["kanye"]', '{"kanye": 1}', '{"kanye": "  "}'])
+    def test_invalid_overrides_file_is_rejected(self, tmp_path, content):
+        path = tmp_path / "overrides.json"
+        path.write_text(content)
+        with pytest.raises(SystemExit, match="overrides.json"):
+            load_overrides(path)
+
+    def test_run_uses_the_overrides_file_and_reports_the_source(self, tmp_path, capsys):
+        rows = [
+            {"genre": "rock", "artist": "Drake", "title": "A", "release_date": "", "url": "", "lyrics": "Drake said hi"}
+        ]
+        save_records(tmp_path / "lyrics_rock_1artists_1songs.csv", LYRICS_FIELDS, rows)
+        (tmp_path / "artist_aliases.json").write_text(json.dumps({"Drake": {"terms": ["Drake"]}}))
+        (tmp_path / "replacement_overrides.json").write_text('{"drake": "Mister X", "ghost": "boo"}')
+        LyricsAnonymizer(AnonymizationConfig(output_dir=tmp_path)).run()
+
+        anonymized = (tmp_path / "anonymized" / "lyrics_rock_1artists_1songs.csv").read_text()
+        assert "Mister X said hi" in anonymized
+        assert "Drake,drake,mister x,1,override" in (tmp_path / "anonymized" / "replacements.csv").read_text()
+        assert "['ghost']" in capsys.readouterr().out

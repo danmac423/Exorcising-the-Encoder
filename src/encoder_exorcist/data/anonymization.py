@@ -14,6 +14,12 @@ name would stay recognisable. A name missing from CMUdict gets its pronunciation
 (CMUdict plus a small grapheme-to-phoneme network), and such replacements are marked `approximate` in
 replacements.csv. g2p_en downloads two small NLTK data packages on first use.
 
+You can choose the replacement yourself in replacement_overrides.json, a JSON object next to artist_aliases.json:
+{"kanye": "candy", "kanye west": "candy chest"}. A key is a word or a whole name (case and accents do not matter),
+the value is used as it is. A whole-name key wins over the keys of its words, and an override wins over the automatic
+choice. A key is only applied to names that are among an artist's terms in artist_aliases.json. replacements.csv shows
+where each replacement came from (`source`: cmudict, g2p or override), and unused keys are listed after the run.
+
 A multi-word term matches regardless of case. A single-word term matches only when capitalised, so a name like
 "Future" or "Post" does not rewrite the ordinary words in a lyric. Only the lyrics column is changed.
 """
@@ -44,7 +50,7 @@ MIN_TOKEN_LEN = 4  # parts of a multi-word name shorter than this ("Lil", "Jay")
 KEEP_WORDS = {"the", "and", "of", "a", "an", "de", "la", "le", "el", "von", "van", "da", "di", "du", "feat", "ft"}
 
 LYRICS_FILE_GLOB = "lyrics_*.csv"
-REPLACEMENT_FIELDS = ["artist", "original", "replacement", "count", "approximate"]
+REPLACEMENT_FIELDS = ["artist", "original", "replacement", "count", "source"]
 
 
 def strip_accents(text: str) -> str:
@@ -144,6 +150,18 @@ def spelling_similarity(first: str, second: str) -> float:
     return difflib.SequenceMatcher(None, first, second).ratio()
 
 
+def override_key(text: str) -> str:
+    """Words of a name in lowercase without accents or punctuation, e.g. "Tyler, The Creator" -> "tyler the creator"."""
+    return " ".join(re.findall(r"[^\W\d_]+", strip_accents(text).lower()))
+
+
+def apply_case(source: str, text: str) -> str:
+    """Gives an override the case style of the name it replaces, without touching its inner capitals."""
+    if len(source) > 1 and source.isupper():
+        return text.upper()
+    return text[:1].upper() + text[1:] if source[:1].isupper() else text
+
+
 def match_case(source: str, word: str) -> str:
     if len(source) > 1 and source.isupper():
         return word.upper()
@@ -239,11 +257,22 @@ class PhoneticSubstitutor:
 
 
 class Anonymizer:
-    """Replaces the artists' names in lyrics. `terms` maps an artist to the terms to look for (see build_terms)."""
+    """Replaces the artists' names in lyrics.
 
-    def __init__(self, terms: dict[str, list[str]], substitutor: PhoneticSubstitutor):
+    `terms` maps an artist to the terms to look for (see build_terms). `overrides` maps a word or a whole name to the
+    text that replaces it instead of the automatic choice.
+    """
+
+    def __init__(
+        self,
+        terms: dict[str, list[str]],
+        substitutor: PhoneticSubstitutor,
+        overrides: dict[str, str] | None = None,
+    ):
         self.terms = terms
         self.substitutor = substitutor
+        self.overrides = {override_key(key): value for key, value in (overrides or {}).items() if override_key(key)}
+        self.used_overrides: set[str] = set()
         self._patterns: dict[str, re.Pattern | None] = {}
 
     def _pattern(self, artist: str) -> re.Pattern | None:
@@ -257,23 +286,39 @@ class Anonymizer:
             )
         return self._patterns[artist]
 
-    def _replace(self, matched: str) -> tuple[str, bool]:
-        """Replacement for one matched name and whether any word of it is only an approximate choice."""
-        approximate = False
+    def _override(self, text: str) -> str | None:
+        key = override_key(text)
+        if key not in self.overrides:
+            return None
+        self.used_overrides.add(key)
+        return apply_case(text, self.overrides[key])
+
+    def _replace(self, matched: str) -> tuple[str, str]:
+        """Replacement for one matched name and where it came from: "override", "g2p" (a predicted pronunciation
+        was used for some word) or "cmudict"."""
+        whole = self._override(matched)
+        if whole is not None:
+            return whole, "override"
+        source = "cmudict"
 
         def substitute(word: re.Match) -> str:
-            nonlocal approximate
+            nonlocal source
             piece = word.group(0)
+            chosen = self._override(piece)
+            if chosen is not None:
+                source = "override"
+                return chosen
             if len(piece) < MIN_TERM_LEN or piece.lower() in KEEP_WORDS:
                 return piece
             substitution = self.substitutor.substitute(piece)
-            approximate = approximate or substitution.approximate
+            if substitution.approximate and source != "override":
+                source = "g2p"
             return match_case(piece, substitution.word)
 
-        return re.sub(r"[^\W\d_]+", substitute, matched), approximate
+        return re.sub(r"[^\W\d_]+", substitute, matched), source
 
     def anonymize(self, artist: str, text: str) -> tuple[str, Counter]:
-        """The text with the artist's names replaced, and a count per (original, replacement, approximate)."""
+        """The text with the artist's names replaced, and a count per (original, replacement, source)."""
         pattern = self._pattern(artist)
         replaced: Counter = Counter()
         if pattern is None:
@@ -283,9 +328,9 @@ class Anonymizer:
             matched = match.group(0)
             if not re.search(r"[\s\-]", matched) and not matched[:1].isupper():
                 return matched  # a single word counts as a name only when capitalised
-            replacement, approximate = self._replace(matched)
+            replacement, source = self._replace(matched)
             if replacement != matched:
-                replaced[(matched.lower(), replacement.lower(), approximate)] += 1
+                replaced[(matched.lower(), replacement.lower(), source)] += 1
             return replacement
 
         return pattern.sub(substitute, text), replaced
@@ -310,6 +355,10 @@ class AnonymizationConfig:
         return self.output_dir / "artist_aliases.json"
 
     @property
+    def overrides_path(self) -> Path:
+        return self.output_dir / "replacement_overrides.json"
+
+    @property
     def anonymized_dir(self) -> Path:
         return self.output_dir / "anonymized"
 
@@ -320,6 +369,21 @@ def load_aliases(path: Path) -> dict[str, dict]:
 
 def save_aliases(path: Path, aliases: dict[str, dict]) -> None:
     path.write_text(json.dumps(aliases, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_overrides(path: Path) -> dict[str, str]:
+    """The hand-written replacements (see the module docstring); empty if the file does not exist."""
+    if not path.exists():
+        return {}
+    try:
+        overrides = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(overrides, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) and value.strip() for key, value in overrides.items()
+    ):
+        raise SystemExit(f'{path} must be a JSON object of non-empty strings, e.g. {{"kanye": "candy"}}')
+    return {key: value.strip() for key, value in overrides.items()}
 
 
 def lyric_words(records: Iterable[dict]) -> Iterable[str]:
@@ -344,29 +408,33 @@ class LyricsAnonymizer:
         aliases = self._collect_aliases(artists)
         terms = {artist: entry["terms"] for artist, entry in aliases.items()}
         substitutor = PhoneticSubstitutor(lyric_words(row for rows in records.values() for row in rows))
-        anonymizer = Anonymizer(terms, substitutor)
+        overrides = load_overrides(config.overrides_path)
+        anonymizer = Anonymizer(terms, substitutor, overrides)
 
         config.anonymized_dir.mkdir(parents=True, exist_ok=True)
         replacements: Counter = Counter()
         for path, rows in records.items():
             for row in rows:
                 row["lyrics"], replaced = anonymizer.anonymize(row["artist"], row["lyrics"])
-                for (original, replacement, approximate), count in replaced.items():
-                    replacements[(row["artist"], original, replacement, approximate)] += count
+                for (original, replacement, source), count in replaced.items():
+                    replacements[(row["artist"], original, replacement, source)] += count
             fields = list(rows[0]) if rows else []
             save_records(config.anonymized_dir / path.name, fields, rows)
             print(f"{path.name}: {len(rows)} songs -> {config.anonymized_dir / path.name}")
 
         report = [
-            dict(zip(REPLACEMENT_FIELDS, (artist, original, replacement, count, approximate), strict=True))
-            for (artist, original, replacement, approximate), count in sorted(replacements.items())
+            dict(zip(REPLACEMENT_FIELDS, (artist, original, replacement, count, source), strict=True))
+            for (artist, original, replacement, source), count in sorted(replacements.items())
         ]
         save_records(config.anonymized_dir / "replacements.csv", REPLACEMENT_FIELDS, report)
-        approximate_count = sum(1 for row in report if row["approximate"])
+        by_source = Counter(row["source"] for row in report)
         print(
-            f"{sum(replacements.values())} replacements ({len(report)} distinct, {approximate_count} approximate) "
-            f"-> {config.anonymized_dir / 'replacements.csv'}"
+            f"{sum(replacements.values())} replacements ({len(report)} distinct: {by_source['override']} override, "
+            f"{by_source['g2p']} g2p, {by_source['cmudict']} cmudict) -> {config.anonymized_dir / 'replacements.csv'}"
         )
+        unused = sorted(set(anonymizer.overrides) - anonymizer.used_overrides)
+        if unused:
+            print(f"Overrides never applied (not part of an artist's terms, or not in the lyrics): {unused}")
 
     def _collect_aliases(self, artists: list[str]) -> dict[str, dict]:
         """Aliases for all artists, fetching the missing ones from MusicBrainz (saved after each artist)."""

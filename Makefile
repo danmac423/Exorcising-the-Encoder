@@ -39,6 +39,7 @@ data:
 
 # Replace artist names in the lyrics with phonetically similar words (MusicBrainz aliases + CMUdict).
 # Reads OUTPUT_DIR/lyrics_*.csv, writes OUTPUT_DIR/anonymized/ and caches aliases in OUTPUT_DIR/artist_aliases.json.
+# Your own replacements go in OUTPUT_DIR/replacement_overrides.json, e.g. {"kanye": "candy"} (see anonymization.py).
 #   MUSICBRAINZ_CONTACT  e-mail or URL put in the User-Agent, required by MusicBrainz (can also be set in .env)
 #   OUTPUT_DIR           same as for `make data` (default: outputs)
 anonymize:
