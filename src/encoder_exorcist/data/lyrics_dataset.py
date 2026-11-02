@@ -74,7 +74,7 @@ class DatasetConfig:
     test_songs: int = 5  # songs per artist in the test set
     heldout_songs: int = 5  # songs per artist in the held-out set
     test_before: date = date(2025, 1, 1)  # test set: songs released before this date
-    heldout_after: date = date(2025, 1, 31)  # held-out set: songs released after this date
+    heldout_after: date = date(2026, 1, 31)  # held-out set: songs released after this date
     title_similarity: float = 0.9  # titles at least this similar (0-1, difflib ratio) are the same song
     pool_multiplier: int = 2  # Last.fm pool size = pool_multiplier x n_artists
     output_dir: Path = PROJECT_ROOT / "outputs"
