@@ -1,4 +1,4 @@
-.PHONY: install fmt lint typecheck test check run data clean
+.PHONY: install fmt lint typecheck test check run data anonymize clean
 
 install:
 	uv sync
@@ -36,6 +36,13 @@ run:
 #   OUTPUT_DIR        where the CSV files go (default: outputs)
 data:
 	uv run python scripts/data_preparation.py
+
+# Replace artist names in the lyrics with phonetically similar words (MusicBrainz aliases + CMUdict).
+# Reads OUTPUT_DIR/lyrics_*.csv, writes OUTPUT_DIR/anonymized/ and caches aliases in OUTPUT_DIR/artist_aliases.json.
+#   MUSICBRAINZ_CONTACT  e-mail or URL put in the User-Agent, required by MusicBrainz (can also be set in .env)
+#   OUTPUT_DIR           same as for `make data` (default: outputs)
+anonymize:
+	uv run python scripts/anonymize_lyrics.py
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +
