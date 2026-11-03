@@ -9,7 +9,7 @@
   (audio_reference/<artist>_<title>.wav). Open this file in a browser, pick the two folders, click a song.
   No server: the browser reads the picked folders locally. A Google Drive for desktop folder works as is.
   Matching: a generated "<artist>_<title>_s<seed>" matches the original "<artist>_<title>" (same slugify as
-  encoder_exorcist.data.audio_reference). manifest.csv next to the audio, if present, adds artist, title, genre and the
+  encoder_exorcist.data.audio_reference). manifest*.csv next to the audio, if present, adds artist, title, genre and the
   LM caption of with-cot songs.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -218,7 +218,7 @@ async function loadGenerated(files) {
   state.songs.clear();
   const manifest = new Map();
   for (const f of files) {
-    if (f.name === "manifest.csv") {
+    if (/^manifest.*\.csv$/.test(f.name)) {  // manifest.csv, or manifest_<genre>.csv from the per-genre Drive zips
       const config = f.webkitRelativePath.split("/").slice(-2, -1)[0];
       for (const row of parseCsv(await f.text())) manifest.set(`${row.config || config}/${row.song_id}`, row);
     }
