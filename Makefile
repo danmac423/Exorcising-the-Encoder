@@ -1,4 +1,5 @@
-.PHONY: install fmt lint typecheck test check run data anonymize clean
+
+.PHONY: install fmt lint typecheck test check run data audio anonymize clean
 
 install:
 	uv sync
@@ -44,6 +45,13 @@ data:
 #   OUTPUT_DIR           same as for `make data` (default: outputs)
 anonymize:
 	uv run python scripts/anonymize_lyrics.py
+
+# Download reference audio (wav) for the songs in the lyrics CSV files.
+#   CSV         lyrics CSV files, space separated (default: all outputs/lyrics_*.csv)
+#   AUDIO_DIR   where the wav files go (default: audio_reference)
+# e.g.: make audio CSV=outputs/lyrics_pop_4artists_20songs.csv
+audio:
+	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR))
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +
