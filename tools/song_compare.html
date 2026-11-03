@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Odsłuch porównawczy</title>
+<!--
+  Side-by-side listening: a generated song (outputs/generated/<config>/audio/<song_id>.flac) next to the original
+  (audio_reference/<artist>_<title>.wav). Open this file in a browser, pick the two folders, click a song.
+  No server: the browser reads the picked folders locally. A Google Drive for desktop folder works as is.
+  Matching: a generated "<artist>_<title>_s<seed>" matches the original "<artist>_<title>" (same slugify as
+  encoder_exorcist.data.audio_reference). manifest.csv next to the audio, if present, adds artist, title, genre and the
+  LM caption of with-cot songs.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: mixing-desk split. Song index on the left, two stacked channels (A generated, B original) on the right. */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #1d211f;
+  --muted: #646b66;
+  --line: #d9ddd8;
+  --chan-a: #2f6d8f;   /* generated */
+  --chan-b: #b0602a;   /* original */
+  --ok: #3c7d4f;
+  --missing: #a23b3b;
+  --font-ui: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141716; --panel: #1c201e; --ink: #e6e9e6; --muted: #9aa29d; --line: #2f3532;
+    --chan-a: #6fb3d6; --chan-b: #e39a62; --ok: #7cc28f; --missing: #e07c7c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141716; --panel: #1c201e; --ink: #e6e9e6; --muted: #9aa29d; --line: #2f3532;
+  --chan-a: #6fb3d6; --chan-b: #e39a62; --ok: #7cc28f; --missing: #e07c7c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px;
+}
+h1 { font-size: 1.25rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.mono { font-family: var(--font-mono); font-size: 0.8rem; }
+.muted { color: var(--muted); }
+button, input, select { font: inherit; color: inherit; }
+button {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+:focus-visible { outline: 2px solid var(--chan-a); outline-offset: 2px; }
+
+.app { display: grid; gap: 16px; max-width: 1280px; margin: 0 auto; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; justify-content: space-between; }
+.sources { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.source { display: inline-flex; gap: 8px; align-items: center; }
+.source label.pick {
+  border: 1px dashed var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; background: var(--panel);
+}
+.source label.pick:hover { border-color: var(--muted); }
+.source input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.a { background: var(--chan-a); } .dot.b { background: var(--chan-b); }
+
+.main { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .main { grid-template-columns: minmax(0, 1fr); } }
+
+.index { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: grid; min-width: 0; }
+.index .filters { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+.index input[type=search], .index select {
+  width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+}
+.index .filter-row { display: flex; gap: 8px; }
+.list { max-height: calc(100vh - 230px); overflow-y: auto; padding-block: 4px; }
+@media (max-width: 760px) { .list { max-height: 45vh; } }
+.genre {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  padding: 10px 12px 4px; position: sticky; top: 0; background: var(--panel);
+}
+.artist { font-weight: 600; font-size: 0.85rem; padding: 6px 12px 2px; }
+.song {
+  display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 0;
+  background: transparent; padding: 5px 12px 5px 20px; font-size: 0.9rem;
+}
+.song:hover { background: var(--bg); }
+.song[aria-current="true"] { background: var(--bg); box-shadow: inset 3px 0 0 var(--chan-a); }
+.song .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song .heard { color: var(--ok); font-size: 0.8rem; }
+.song .nob { color: var(--missing); font-size: 0.72rem; }
+
+.deck { display: grid; gap: 12px; min-width: 0; }
+.now { display: grid; gap: 4px; }
+.now .title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.015em; text-wrap: balance; margin: 0; }
+.now .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.channel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 10px;
+  min-width: 0;
+}
+.channel.playing.a { border-color: var(--chan-a); } .channel.playing.b { border-color: var(--chan-b); }
+.channel .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.channel .name { font-weight: 600; }
+.channel .key {
+  font-family: var(--font-mono); font-size: 0.72rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px;
+  color: var(--muted);
+}
+.channel audio { width: 100%; }
+.channel .file { overflow-wrap: anywhere; }
+.versions { display: flex; flex-wrap: wrap; gap: 6px; }
+.versions button[aria-pressed="true"] { border-color: var(--chan-a); color: var(--chan-a); }
+.caption { font-size: 0.88rem; color: var(--muted); max-width: 70ch; }
+.empty-chan { color: var(--missing); font-size: 0.9rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.keys { font-size: 0.8rem; color: var(--muted); }
+.keys kbd {
+  font-family: var(--font-mono); font-size: 0.72rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px;
+  background: var(--panel);
+}
+.notice {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; display: grid; gap: 8px;
+  max-width: 70ch;
+}
+.notice ol { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; }
+code { font-family: var(--font-mono); font-size: 0.82em; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Odsłuch porównawczy</h1>
+      <div class="muted">ACE-Step 1.5: piosenka wygenerowana z samego tekstu obok oryginału</div>
+    </div>
+    <div class="sources">
+      <span class="source">
+        <span class="dot a" aria-hidden="true"></span>
+        <label class="pick" for="pick-gen">Wybierz folder z wygenerowanymi</label>
+        <input id="pick-gen" type="file" webkitdirectory multiple>
+        <span id="stat-gen" class="mono muted">—</span>
+      </span>
+      <span class="source">
+        <span class="dot b" aria-hidden="true"></span>
+        <label class="pick" for="pick-ref">Wybierz folder z oryginałami</label>
+        <input id="pick-ref" type="file" webkitdirectory multiple>
+        <span id="stat-ref" class="mono muted">—</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="main">
+    <nav class="index" aria-label="Lista piosenek">
+      <div class="filters">
+        <input id="q" type="search" placeholder="Szukaj artysty lub tytułu" autocomplete="off">
+        <div class="filter-row">
+          <select id="genre-filter" aria-label="Gatunek"><option value="">Wszystkie gatunki</option></select>
+          <select id="heard-filter" aria-label="Stan odsłuchu">
+            <option value="">Wszystkie</option>
+            <option value="todo">Nieprzesłuchane</option>
+            <option value="done">Przesłuchane</option>
+          </select>
+        </div>
+      </div>
+      <div id="list" class="list"></div>
+    </nav>
+
+    <section id="deck" class="deck" aria-live="polite"></section>
+  </div>
+</div>
+
+<script>
+"use strict";
+const AUDIO_RE = /\.(flac|wav|mp3|ogg|opus|m4a)$/i;
+const HEARD_KEY = "song-compare-heard";
+
+const state = { songs: new Map(), refs: new Map(), current: null, version: 0, urls: [] };
+let heard = new Set();
+try { heard = new Set(JSON.parse(localStorage.getItem(HEARD_KEY) || "[]")); } catch { /* storage blocked */ }
+const saveHeard = () => { try { localStorage.setItem(HEARD_KEY, JSON.stringify([...heard])); } catch {} };
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+};
+const stem = (name) => name.replace(/\.[^.]+$/, "");
+
+// Minimal RFC 4180 CSV parser (quoted fields may contain commas, quotes and newlines).
+function parseCsv(text) {
+  const rows = []; let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += ch;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  const [header, ...body] = rows.filter((r) => r.length > 1 || r[0]);
+  return body.map((r) => Object.fromEntries(header.map((h, i) => [h, r[i] ?? ""])));
+}
+
+// Generated folder: audio files plus optional manifest.csv files (one per configuration folder).
+async function loadGenerated(files) {
+  state.songs.clear();
+  const manifest = new Map();
+  for (const f of files) {
+    if (f.name === "manifest.csv") {
+      const config = f.webkitRelativePath.split("/").slice(-2, -1)[0];
+      for (const row of parseCsv(await f.text())) manifest.set(`${row.config || config}/${row.song_id}`, row);
+    }
+  }
+  let n = 0;
+  for (const f of files) {
+    if (!AUDIO_RE.test(f.name)) continue;
+    const id = stem(f.name);
+    const parts = f.webkitRelativePath.split("/");
+    const config = parts.length >= 3 && parts[parts.length - 2] === "audio" ? parts[parts.length - 3] : "";
+    const meta = manifest.get(`${config}/${id}`) || {};
+    const m = id.match(/^(.*)_s(\d+)$/);
+    const key = m ? m[1] : id;
+    const song = state.songs.get(key) || { key, artist: meta.artist || "", title: meta.title || key, genre: meta.genre || "", versions: [] };
+    if (meta.artist) Object.assign(song, { artist: meta.artist, title: meta.title, genre: meta.genre });
+    song.versions.push({ file: f, config: config || meta.config || "?", seed: m ? Number(m[2]) : 0, caption: meta.lm_caption || "", bpm: meta.lm_bpm || "", keyscale: meta.lm_keyscale || "" });
+    state.songs.set(key, song);
+    n++;
+  }
+  for (const s of state.songs.values()) s.versions.sort((a, b) => a.config.localeCompare(b.config) || a.seed - b.seed);
+  $("stat-gen").textContent = `${n} plików, ${state.songs.size} piosenek, ${manifest.size ? "z manifestem" : "bez manifestu"}`;
+}
+
+function loadRefs(files) {
+  state.refs.clear();
+  for (const f of files) if (AUDIO_RE.test(f.name)) state.refs.set(stem(f.name), f);
+  $("stat-ref").textContent = `${state.refs.size} oryginałów`;
+}
+
+function filteredSongs() {
+  const q = $("q").value.trim().toLowerCase();
+  const genre = $("genre-filter").value, hf = $("heard-filter").value;
+  return [...state.songs.values()]
+    .filter((s) => !q || `${s.artist} ${s.title}`.toLowerCase().includes(q))
+    .filter((s) => !genre || s.genre === genre)
+    .filter((s) => !hf || (hf === "done") === heard.has(s.key))
+    .sort((a, b) => a.genre.localeCompare(b.genre) || a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title));
+}
+
+function renderGenres() {
+  const sel = $("genre-filter"), keep = sel.value;
+  const genres = [...new Set([...state.songs.values()].map((s) => s.genre).filter(Boolean))].sort();
+  sel.replaceChildren(el("option", { value: "", textContent: "Wszystkie gatunki" }), ...genres.map((g) => el("option", { value: g, textContent: g })));
+  sel.value = genres.includes(keep) ? keep : "";
+}
+
+function renderList() {
+  const list = $("list");
+  const songs = filteredSongs();
+  if (!state.songs.size) { list.replaceChildren(el("p", { className: "muted", style: "padding:12px;margin:0", textContent: "Wybierz folder z wygenerowanymi piosenkami." })); return; }
+  if (!songs.length) { list.replaceChildren(el("p", { className: "muted", style: "padding:12px;margin:0", textContent: "Nic nie pasuje do filtrów." })); return; }
+  const out = []; let g = null, a = null;
+  for (const s of songs) {
+    if (s.genre !== g) { g = s.genre; a = null; out.push(el("div", { className: "genre", textContent: g || "bez gatunku" })); }
+    if (s.artist !== a) { a = s.artist; if (a) out.push(el("div", { className: "artist", textContent: a })); }
+    const btn = el("button", { className: "song", type: "button" },
+      el("span", { className: "t", textContent: s.title }),
+      state.refs.size && !state.refs.has(s.key) ? el("span", { className: "nob", textContent: "brak oryg.", title: "Brak oryginału w wybranym folderze" }) : null,
+      heard.has(s.key) ? el("span", { className: "heard", textContent: "✓", title: "Przesłuchane" }) : null);
+    btn.setAttribute("aria-current", String(s.key === state.current));
+    btn.addEventListener("click", () => select(s.key));
+    out.push(btn);
+  }
+  list.replaceChildren(...out);
+}
+
+function revokeUrls() { for (const u of state.urls) URL.revokeObjectURL(u); state.urls = []; }
+const urlFor = (file) => { const u = URL.createObjectURL(file); state.urls.push(u); return u; };
+
+function channel(cls, name, keyHint, file, extra) {
+  const box = el("div", { className: `channel ${cls}` });
+  const head = el("div", { className: "head" }, el("span", { className: `dot ${cls}` }), el("span", { className: "name", textContent: name }), el("span", { className: "key", textContent: keyHint }));
+  box.append(head);
+  if (!file) { box.append(el("div", { className: "empty-chan", textContent: extra || "Brak pliku." })); return { box, audio: null }; }
+  const audio = el("audio", { controls: true, preload: "metadata", src: urlFor(file) });
+  audio.addEventListener("play", () => { for (const other of document.querySelectorAll("audio")) if (other !== audio) other.pause(); box.classList.add("playing"); });
+  audio.addEventListener("pause", () => box.classList.remove("playing"));
+  box.append(audio, el("div", { className: "file mono muted", textContent: file.webkitRelativePath || file.name }));
+  if (extra) box.append(extra);
+  return { box, audio };
+}
+
+function renderDeck() {
+  const deck = $("deck");
+  revokeUrls();
+  const song = state.songs.get(state.current);
+  if (!song) {
+    deck.replaceChildren(el("div", { className: "notice" },
+      el("strong", { textContent: "Jak zacząć" }),
+      el("ol", {},
+        el("li", { innerHTML: "Wskaż folder z wygenerowanymi piosenkami, np. <code>outputs/generated</code> albo folder z Drive'a. Najlepiej cały, razem z <code>manifest.csv</code>." }),
+        el("li", { innerHTML: "Wskaż folder z oryginałami, czyli rozpakowane <code>audio_reference</code>." }),
+        el("li", { textContent: "Kliknij piosenkę z listy. Wygenerowana wersja i oryginał pojawią się jedna pod drugą." })),
+      el("div", { className: "muted", textContent: "Pliki zostają na Twoim komputerze. Strona niczego nie wysyła." })));
+    return;
+  }
+  const v = song.versions[Math.min(state.version, song.versions.length - 1)];
+  const meta = el("div", { className: "meta mono muted" },
+    song.genre ? el("span", { textContent: song.genre }) : null,
+    el("span", { textContent: `${v.config} · seed ${v.seed}` }),
+    v.bpm ? el("span", { textContent: `LM: ${v.bpm} BPM, ${v.keyscale}` }) : null);
+  const now = el("div", { className: "now" }, el("div", { className: "muted", textContent: song.artist }), el("h2", { className: "title", textContent: song.title }), meta);
+
+  const versions = song.versions.length > 1 ? el("div", { className: "versions", role: "group", ariaLabel: "Wersje" },
+    ...song.versions.map((ver, i) => {
+      const b = el("button", { type: "button", textContent: `${ver.config} s${ver.seed}` });
+      b.setAttribute("aria-pressed", String(ver === v));
+      b.addEventListener("click", () => { state.version = i; renderDeck(); });
+      return b;
+    })) : null;
+  const caption = v.caption ? el("div", { className: "caption", textContent: `Opis napisany przez LM: ${v.caption}` }) : null;
+  const a = channel("a", "Wygenerowana", "1", v.file, caption);
+  const ref = state.refs.get(song.key);
+  const b = channel("b", "Oryginał", "2", ref, state.refs.size ? `Brak pliku ${song.key}.* w folderze z oryginałami.` : "Wybierz folder z oryginałami.");
+
+  const heardBtn = el("button", { id: "heard-btn", type: "button" });
+  heardBtn.addEventListener("click", () => toggleHeard(song.key));
+  const actions = el("div", { className: "actions" }, heardBtn,
+    el("span", { className: "keys", innerHTML: "<kbd>1</kbd> wygenerowana · <kbd>2</kbd> oryginał · <kbd>Spacja</kbd> pauza · <kbd>J</kbd>/<kbd>K</kbd> następna/poprzednia · <kbd>←</kbd>/<kbd>→</kbd> ±10 s · <kbd>H</kbd> przesłuchane" }));
+  deck.replaceChildren(now, versions || "", a.box, b.box, actions);
+  state.players = { a: a.audio, b: b.audio };
+  updateHeardButton();
+}
+
+function updateHeardButton() {
+  const btn = $("heard-btn");
+  if (btn) btn.textContent = heard.has(state.current) ? "Oznacz jako nieprzesłuchane" : "Oznacz jako przesłuchane";
+}
+
+// Updates only the list and the button, so the players keep playing.
+function toggleHeard(key) {
+  heard.has(key) ? heard.delete(key) : heard.add(key);
+  saveHeard(); renderList(); updateHeardButton();
+}
+
+function select(key) {
+  state.current = key; state.version = 0;
+  renderList(); renderDeck();
+  document.querySelector('.song[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+}
+
+function step(delta) {
+  const songs = filteredSongs(); if (!songs.length) return;
+  const i = songs.findIndex((s) => s.key === state.current);
+  select(songs[(i + delta + songs.length) % songs.length].key);
+}
+
+function playOnly(which) {
+  const p = state.players?.[which]; if (!p) return;
+  p.paused ? p.play() : p.pause();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, select, textarea") || e.metaKey || e.ctrlKey || e.altKey) return;
+  const playing = [...document.querySelectorAll("audio")].find((x) => !x.paused);
+  switch (e.key) {
+    case "1": playOnly("a"); break;
+    case "2": playOnly("b"); break;
+    case " ": e.preventDefault(); if (playing) playing.pause(); else state.players?.a?.play(); break;
+    case "j": case "J": step(1); break;
+    case "k": case "K": step(-1); break;
+    case "ArrowRight": if (playing) { playing.currentTime += 10; e.preventDefault(); } break;
+    case "ArrowLeft": if (playing) { playing.currentTime -= 10; e.preventDefault(); } break;
+    case "h": case "H": if (state.current) toggleHeard(state.current); break;
+    default: return;
+  }
+});
+
+$("pick-gen").addEventListener("change", async (e) => { await loadGenerated([...e.target.files]); renderGenres(); renderList(); renderDeck(); });
+$("pick-ref").addEventListener("change", (e) => { loadRefs([...e.target.files]); renderList(); renderDeck(); });
+for (const id of ["q", "genre-filter", "heard-filter"]) $(id).addEventListener("input", renderList);
+renderList(); renderDeck();
+</script>
+</body>
+</html>
