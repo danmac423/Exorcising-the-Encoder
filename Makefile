@@ -1,5 +1,5 @@
 
-.PHONY: install fmt lint typecheck test check run data audio anonymize clean
+.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check clean
 
 install:
 	uv sync
@@ -52,6 +52,22 @@ anonymize:
 # e.g.: make audio CSV=outputs/lyrics_pop_4artists_20songs.csv
 audio:
 	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR))
+
+# Generate songs from the anonymized lyrics with ACE-Step and record activations (see encoder_exorcist/generation.py).
+# Reads outputs/anonymized/lyrics_*.csv, writes outputs/generated/<CONFIG>/ (audio, activations, manifest.csv).
+# Interrupted runs continue where they stopped.
+#   CONFIG    no-cot (5Hz LM off, default) or with-cot (LM writes caption/metadata and audio codes)
+#   SEEDS     generations per song (default: 1)
+#   LIMIT     only the first N songs, for a quick test
+#   CSV       lyrics CSV files, space separated (default: all outputs/anonymized/lyrics_*.csv)
+# e.g.: make generate CONFIG=with-cot SEEDS=2
+GENERATE_ARGS = $(CSV) $(if $(CONFIG),--config $(CONFIG)) $(if $(SEEDS),--seeds $(SEEDS)) $(if $(LIMIT),--limit $(LIMIT))
+generate:
+	uv run python scripts/generate_songs.py $(GENERATE_ARGS)
+
+# Generate one song and check the hooks against docs/hook_points.md, section 7 (writes nothing).
+generate-check:
+	uv run python scripts/generate_songs.py --check $(GENERATE_ARGS)
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +
