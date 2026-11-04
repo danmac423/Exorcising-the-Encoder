@@ -138,6 +138,6 @@ Wykresy powstają w `notebooks/probe_results.ipynb`.
 |---|---|
 | Środowisko (WIMU-6), benchmark GPU (WIMU-8), hooki (WIMU-11) | ✅ |
 | Wybór artystów (WIMU-9) | ✅ |
-| Teksty, anonimizacja, nagrania (WIMU-10, 22, 25) | w recenzji |
-| Skrypt generacji (WIMU-20), sonda (WIMU-21) | w recenzji (PR #8, #9) |
-| Analiza literatury (WIMU-7) | w recenzji |
+| Teksty, anonimizacja, nagrania (WIMU-10, 22, 25) | ✅ |
+| Skrypt generacji (WIMU-20), sonda (WIMU-21) | ✅ |
+| Analiza literatury (WIMU-7) | ✅ |
