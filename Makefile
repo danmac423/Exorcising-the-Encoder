@@ -72,7 +72,7 @@ generate-check:
 # Train linear probes for artist identity on the activations of a generation run (see encoder_exorcist/probing.py).
 # Reads outputs/generated/<CONFIG>/, writes outputs/probe/<CONFIG>/results.csv and per_artist.csv.
 #   CONFIG        generation run: no-cot (default) or with-cot
-#   PERMUTATIONS  permutations for the stream outputs (except timbre_out) and lyric layers (default: 1000, 0 disables the test)
+#   PERMUTATIONS  permutations for the stream outputs (except timbre_out), lyric layers and baselines (default: 1000, 0 disables the test)
 # e.g.: make probe CONFIG=with-cot PERMUTATIONS=0
 probe:
 	uv run python scripts/train_probe.py $(if $(CONFIG),--config $(CONFIG)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS))

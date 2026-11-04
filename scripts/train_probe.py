@@ -52,6 +52,8 @@ def main() -> None:
         n_permutations=args.permutations,
         baselines=not args.no_baselines,
     )
+    if not rows:
+        raise SystemExit("nothing was probed: no points selected and no baselines")
     out_dir = args.output_dir / args.config
     out_dir.mkdir(parents=True, exist_ok=True)
     save_records(out_dir / "results.csv", RESULT_FIELDS, rows)

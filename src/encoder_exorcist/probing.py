@@ -6,13 +6,15 @@ mean-pooled activation of a song. Protocol from the paper: 5-fold cross-validati
   - features are standardized inside each fold, L2-regularized logistic regression with C=1;
   - folds are stratified by artist and grouped by song (all seeds of one song stay in the same fold), shuffled with a
     fixed random state, and the same folds are used for every hook point;
-  - the 95% CI is the Wilson interval of the pooled out-of-fold accuracy;
+  - the 95% CI is the Wilson interval of the pooled out-of-fold accuracy. It treats every song as an independent
+    trial, which holds for one seed per song; with several seeds of the same lyrics the interval is too narrow;
   - a PCA rotation onto the training samples' span (all components kept) runs before the regression. For an
     L2-regularized linear model the optimum lies in that span, so the classifier is the same (up to the solver's
     tolerance), only fitted on n_train instead of 2048 dimensions, which makes the permutation test affordable.
 
-Baselines from the paper: TF-IDF bag of words of the lyrics, and the mean Qwen3 token embedding of the lyric encoder
-input (the lyrics before any contextual processing).
+Baselines from the paper: TF-IDF bag of words of the lyrics ("tfidf"), and the mean Qwen3 token embedding of the lyric
+encoder input ("qwen3_tokens": the lyrics before any contextual processing, formatted, language-tagged and truncated as
+ACE-Step does). They run only when every song's lyrics are found.
 
 Feature names: the five stream outputs (lyric_out, text_out, timbre_out, merged_out, cond_embed_out), lyric_L{i},
 k_{layer}, v_{layer}, dit_{layer}_{point}_t{step} and dit_{layer}_{point}_mean (mean over denoising steps).
@@ -45,10 +47,16 @@ N_PERMUTATIONS = 1000
 RANDOM_STATE = 0
 QWEN3_DIR = PROJECT_ROOT / "checkpoints" / "Qwen3-Embedding-0.6B"
 LYRICS_TEMPLATE = "# Languages\n{language}\n\n# Lyric\n{lyrics}<|endoftext|>"  # ACE-Step's lyric encoder input
+LYRICS_MAX_TOKENS = 2048  # ACE-Step truncates the lyric encoder input to this length
+BASELINES = ("tfidf", "qwen3_tokens")
 
-# Points that get a permutation test by default: the stream outputs and the lyric encoder layers. timbre_out is left
-# out, it is the same silence reference for every song (a control that must stay at chance).
-DEFAULT_PERMUTED = (*(k for k in STREAM_KEYS if k != "timbre_out"), *[f"lyric_L{i}" for i in range(8)])
+# Points that get a permutation test by default: the stream outputs, the lyric encoder layers (ACE-Step 1.5 has 8) and
+# the baselines. timbre_out is left out, it is the same silence reference for every song (a control at chance).
+DEFAULT_PERMUTED = (
+    *(k for k in STREAM_KEYS if k != "timbre_out"),
+    *[f"lyric_L{i}" for i in range(8)],
+    *BASELINES,
+)
 
 RESULT_FIELDS = [
     "point",
@@ -74,6 +82,7 @@ class ProbeData:
     artists: np.ndarray  # [n_songs] artist name per song
     groups: np.ndarray  # [n_songs] song key (artist + title), identical for all seeds of a song
     lyrics: np.ndarray  # [n_songs] lyrics text (object array, "" when not found)
+    languages: np.ndarray  # [n_songs] vocal language in the lyric encoder input ("unknown" unless the LM set one)
     features: dict[str, np.ndarray]  # point name -> [n_songs, d]
 
 
@@ -104,10 +113,17 @@ def record_features(record: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
 
 
 def load_probe_data(run_dir: Path, lyrics_csvs: Sequence[Path] = ()) -> ProbeData:
-    """Load every song in <run_dir>/manifest.csv; lyrics are looked up in `lyrics_csvs` by artist and title."""
+    """Load every song in <run_dir>/manifest.csv; lyrics are looked up in `lyrics_csvs` by artist and title.
+
+    Rows whose activations file is missing (e.g. a run still in progress) are skipped with a warning.
+    """
     rows = load_records(run_dir / "manifest.csv")
+    missing = [row["song_id"] for row in rows if not (run_dir / row["activations_path"]).exists()]
+    if missing:
+        logger.warning("skipping %d songs without activations: %s", len(missing), missing[:5])
+        rows = [row for row in rows if row["song_id"] not in set(missing)]
     if not rows:
-        raise ValueError(f"no songs in {run_dir / 'manifest.csv'}")
+        raise ValueError(f"no songs with activations in {run_dir / 'manifest.csv'}")
     lyrics_by_song = {(r["artist"], r["title"]): r["lyrics"] for path in lyrics_csvs for r in load_records(path)}
 
     columns: dict[str, list[np.ndarray]] = {}
@@ -120,11 +136,12 @@ def load_probe_data(run_dir: Path, lyrics_csvs: Sequence[Path] = ()) -> ProbeDat
         artists=np.array([row["artist"] for row in rows]),
         groups=np.array([f"{row['artist']}|{row['title']}" for row in rows]),
         lyrics=np.array([lyrics_by_song.get((row["artist"], row["title"]), "") for row in rows], dtype=object),
-        features={name: np.stack(vecs).astype(np.float32) for name, vecs in columns.items()},
+        languages=np.array([row.get("lm_language") or "unknown" for row in rows], dtype=object),
+        features={name: np.stack(vecs).astype(np.float32, copy=False) for name, vecs in columns.items()},
     )
 
 
-def qwen3_token_embeddings(lyrics: Sequence[str], model_dir: Path = QWEN3_DIR, language: str = "unknown") -> np.ndarray:
+def qwen3_token_embeddings(lyrics: Sequence[str], languages: Sequence[str], model_dir: Path = QWEN3_DIR) -> np.ndarray:
     """Mean Qwen3 token embedding of each song's lyric encoder input (no transformer forward, as in ACE-Step)."""
     from safetensors import safe_open
     from transformers import AutoTokenizer
@@ -133,8 +150,12 @@ def qwen3_token_embeddings(lyrics: Sequence[str], model_dir: Path = QWEN3_DIR, l
     with safe_open(str(model_dir / "model.safetensors"), "pt") as file:
         table = file.get_tensor("embed_tokens.weight").float().numpy()
     means = [
-        table[tokenizer(LYRICS_TEMPLATE.format(language=language, lyrics=text))["input_ids"]].mean(axis=0)
-        for text in lyrics
+        table[
+            tokenizer(
+                LYRICS_TEMPLATE.format(language=language, lyrics=text), truncation=True, max_length=LYRICS_MAX_TOKENS
+            )["input_ids"]
+        ].mean(axis=0)
+        for text, language in zip(lyrics, languages, strict=True)
     ]
     return np.stack(means)
 
@@ -261,6 +282,9 @@ def run_probes(
     unknown = sorted(set(names) - set(data.features))
     if unknown:
         raise ValueError(f"unknown hook points: {unknown}")
+    unknown = sorted(set(permuted) - set(data.features) - set(BASELINES))
+    if unknown:
+        raise ValueError(f"unknown points to permutation-test: {unknown}")
     y, groups = data.artists, data.groups
     folds = make_folds(y, groups)
 
@@ -276,20 +300,20 @@ def run_probes(
             X = data.features[name]
             results.append(evaluate_point(name, activation_probe(), X, y, groups, folds, n_permutations, n_jobs))
 
-        if baselines and any(data.lyrics):
-            logger.info("baselines: tfidf and qwen3_tokens")
-            results.append(
-                evaluate_point("tfidf", tfidf_probe(), data.lyrics, y, groups, folds, n_permutations, n_jobs)
-            )
-            qwen = qwen3_token_embeddings(list(data.lyrics))
-            results.append(
-                evaluate_point("qwen3_tokens", activation_probe(), qwen, y, groups, folds, n_permutations, n_jobs)
-            )
+        n_missing = sum(not text for text in data.lyrics)
+        if baselines and n_missing:
+            # An empty input would silently pull the baseline accuracy down.
+            logger.warning("lyrics not found for %d of %d songs, skipping the baselines", n_missing, len(y))
         elif baselines:
-            logger.warning("no lyrics found for the songs, skipping the baselines")
+            logger.info("baselines: %s", ", ".join(BASELINES))
+            n_tfidf = n_permutations if "tfidf" in permuted else 0
+            results.append(evaluate_point("tfidf", tfidf_probe(), data.lyrics, y, groups, folds, n_tfidf, n_jobs))
+            qwen = qwen3_token_embeddings(list(data.lyrics), list(data.languages))
+            n_qwen = n_permutations if "qwen3_tokens" in permuted else 0
+            results.append(evaluate_point("qwen3_tokens", activation_probe(), qwen, y, groups, folds, n_qwen, n_jobs))
 
     rows = [row for row, _ in results]
     per_artist = [r for _, rows_ in results for r in rows_]
-    order = {name: i for i, name in enumerate([*names, "tfidf", "qwen3_tokens"])}
+    order = {name: i for i, name in enumerate([*names, *BASELINES])}
     rows.sort(key=lambda r: order[r["point"]])
     return rows, per_artist

@@ -108,6 +108,7 @@ def test_tfidf_baseline_runs_on_lyrics():
         artists=artists,
         groups=np.arange(20).astype(str),
         lyrics=lyrics,
+        languages=np.full(20, "unknown", dtype=object),
         features={},
     )
     from encoder_exorcist.probing import evaluate_point, make_folds, tfidf_probe
@@ -131,3 +132,23 @@ def test_constant_feature_is_not_significant(tmp_path):
     rows, _ = run_probes(data, points=["const"], permuted=["const"], n_permutations=30, baselines=False, n_jobs=1)
     assert float(rows[0]["accuracy"]) == pytest.approx(0.25)
     assert float(rows[0]["p_value"]) > 0.3
+
+
+def test_permuted_names_are_validated(tmp_path):
+    write_run(tmp_path)
+    with pytest.raises(ValueError, match="permutation-test"):
+        run_probes(load_probe_data(tmp_path), points=["lyric_out"], permuted=["lyric_otu"], baselines=False)
+
+
+def test_rows_without_activations_are_skipped(tmp_path):
+    write_run(tmp_path)
+    next((tmp_path / "activations").glob("*.npz")).unlink()
+    assert len(load_probe_data(tmp_path).song_ids) == 39
+
+
+def test_baselines_are_skipped_when_some_lyrics_are_missing(tmp_path):
+    write_run(tmp_path)
+    data = load_probe_data(tmp_path)
+    data.lyrics = np.array(["la la"] * (len(data.artists) - 1) + [""], dtype=object)
+    rows, _ = run_probes(data, points=["lyric_out"], permuted=[], n_jobs=1)
+    assert [row["point"] for row in rows] == ["lyric_out"]
