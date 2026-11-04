@@ -115,7 +115,7 @@ header.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseli
 .versions { display: flex; flex-wrap: wrap; gap: 6px; }
 .versions button[aria-pressed="true"] { border-color: var(--chan-a); color: var(--chan-a); }
 .caption { font-size: 0.88rem; color: var(--muted); max-width: 70ch; }
-.empty-chan { color: var(--missing); font-size: 0.9rem; }
+.empty-chan, .play-error { color: var(--missing); font-size: 0.9rem; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .keys { font-size: 0.8rem; color: var(--muted); }
 .keys kbd {
@@ -170,7 +170,7 @@ code { font-family: var(--font-mono); font-size: 0.82em; }
       <div id="list" class="list"></div>
     </nav>
 
-    <section id="deck" class="deck" aria-live="polite"></section>
+    <section id="deck" class="deck" aria-label="Odtwarzacze"></section>
   </div>
 </div>
 
@@ -216,25 +216,31 @@ function parseCsv(text) {
 // Generated folder: audio files plus optional manifest.csv files (one per configuration folder).
 async function loadGenerated(files) {
   state.songs.clear();
+  // Keyed by the folder that holds the manifest (the folder above audio/), not by the CSV's config column, so a
+  // renamed copy such as "no-cot (1)" still matches its audio files.
   const manifest = new Map();
-  for (const f of files) {
-    if (/^manifest.*\.csv$/.test(f.name)) {  // manifest.csv, or manifest_<genre>.csv from the per-genre Drive zips
-      const config = f.webkitRelativePath.split("/").slice(-2, -1)[0];
-      for (const row of parseCsv(await f.text())) manifest.set(`${row.config || config}/${row.song_id}`, row);
-    }
-  }
+  const manifests = files.filter((f) => /^manifest.*\.csv$/.test(f.name));  // manifest.csv or manifest_<genre>.csv
+  const texts = await Promise.all(manifests.map((f) => f.text()));
+  manifests.forEach((f, i) => {
+    const folder = f.webkitRelativePath.split("/").slice(-2, -1)[0];
+    for (const row of parseCsv(texts[i])) manifest.set(`${folder}/${row.song_id}`, row);
+  });
   let n = 0;
   for (const f of files) {
     if (!AUDIO_RE.test(f.name)) continue;
     const id = stem(f.name);
     const parts = f.webkitRelativePath.split("/");
-    const config = parts.length >= 3 && parts[parts.length - 2] === "audio" ? parts[parts.length - 3] : "";
-    const meta = manifest.get(`${config}/${id}`) || {};
+    const folder = parts.length >= 3 && parts[parts.length - 2] === "audio" ? parts[parts.length - 3] : "";
+    const meta = manifest.get(`${folder}/${id}`) || {};
+    const config = meta.config || folder || "?";
     const m = id.match(/^(.*)_s(\d+)$/);
     const key = m ? m[1] : id;
     const song = state.songs.get(key) || { key, artist: meta.artist || "", title: meta.title || key, genre: meta.genre || "", versions: [] };
     if (meta.artist) Object.assign(song, { artist: meta.artist, title: meta.title, genre: meta.genre });
-    song.versions.push({ file: f, config: config || meta.config || "?", seed: m ? Number(m[2]) : 0, caption: meta.lm_caption || "", bpm: meta.lm_bpm || "", keyscale: meta.lm_keyscale || "" });
+    const seed = m ? Number(m[2]) : 0;
+    // The same run picked twice (e.g. FLAC and an MP3 copy under one parent folder): keep the first file.
+    if (song.versions.some((v) => v.config === config && v.seed === seed)) continue;
+    song.versions.push({ file: f, config, seed, caption: meta.lm_caption || "", bpm: meta.lm_bpm || "", keyscale: meta.lm_keyscale || "" });
     state.songs.set(key, song);
     n++;
   }
@@ -288,17 +294,25 @@ function renderList() {
 function revokeUrls() { for (const u of state.urls) URL.revokeObjectURL(u); state.urls = []; }
 const urlFor = (file) => { const u = URL.createObjectURL(file); state.urls.push(u); return u; };
 
-function channel(cls, name, keyHint, file, extra) {
+// `missing` is shown when there is no file; `extra` (e.g. the LM caption) only under a player.
+function channel(cls, name, keyHint, file, { missing = "Brak pliku.", extra = null } = {}) {
   const box = el("div", { className: `channel ${cls}` });
   const head = el("div", { className: "head" }, el("span", { className: `dot ${cls}` }), el("span", { className: "name", textContent: name }), el("span", { className: "key", textContent: keyHint }));
   box.append(head);
-  if (!file) { box.append(el("div", { className: "empty-chan", textContent: extra || "Brak pliku." })); return { box, audio: null }; }
+  if (!file) { box.append(el("div", { className: "empty-chan", textContent: missing })); return { box, audio: null }; }
   const audio = el("audio", { controls: true, preload: "metadata", src: urlFor(file) });
+  const error = el("div", { className: "play-error", hidden: true });
   audio.addEventListener("play", () => { for (const other of document.querySelectorAll("audio")) if (other !== audio) other.pause(); box.classList.add("playing"); });
   audio.addEventListener("pause", () => box.classList.remove("playing"));
-  box.append(audio, el("div", { className: "file mono muted", textContent: file.webkitRelativePath || file.name }));
+  audio.addEventListener("error", () => { error.textContent = "Nie udało się odtworzyć pliku. Sprawdź, czy jest dostępny na dysku."; error.hidden = false; });
+  box.append(audio, error, el("div", { className: "file mono muted", textContent: file.webkitRelativePath || file.name }));
   if (extra) box.append(extra);
   return { box, audio };
+}
+
+function play(audio) {
+  // play() rejects e.g. when the file cannot be read; the audio "error" event shows the message.
+  audio.play().catch((err) => console.warn("playback failed:", err));
 }
 
 function renderDeck() {
@@ -306,6 +320,7 @@ function renderDeck() {
   revokeUrls();
   const song = state.songs.get(state.current);
   if (!song) {
+    state.players = null;
     deck.replaceChildren(el("div", { className: "notice" },
       el("strong", { textContent: "Jak zacząć" }),
       el("ol", {},
@@ -330,12 +345,14 @@ function renderDeck() {
       return b;
     })) : null;
   const caption = v.caption ? el("div", { className: "caption", textContent: `Opis napisany przez LM: ${v.caption}` }) : null;
-  const a = channel("a", "Wygenerowana", "1", v.file, caption);
+  const a = channel("a", "Wygenerowana", "1", v.file, { extra: caption });
   const ref = state.refs.get(song.key);
-  const b = channel("b", "Oryginał", "2", ref, state.refs.size ? `Brak pliku ${song.key}.* w folderze z oryginałami.` : "Wybierz folder z oryginałami.");
+  const b = channel("b", "Oryginał", "2", ref, {
+    missing: state.refs.size ? `Brak pliku ${song.key}.* w folderze z oryginałami.` : "Wybierz folder z oryginałami.",
+  });
 
   const heardBtn = el("button", { id: "heard-btn", type: "button" });
-  heardBtn.addEventListener("click", () => toggleHeard(song.key));
+  heardBtn.addEventListener("click", () => { toggleHeard(song.key); heardBtn.blur(); });  // Space stays play/pause
   const actions = el("div", { className: "actions" }, heardBtn,
     el("span", { className: "keys", innerHTML: "<kbd>1</kbd> wygenerowana · <kbd>2</kbd> oryginał · <kbd>Spacja</kbd> pauza · <kbd>J</kbd>/<kbd>K</kbd> następna/poprzednia · <kbd>←</kbd>/<kbd>→</kbd> ±10 s · <kbd>H</kbd> przesłuchane" }));
   deck.replaceChildren(now, versions || "", a.box, b.box, actions);
@@ -363,12 +380,14 @@ function select(key) {
 function step(delta) {
   const songs = filteredSongs(); if (!songs.length) return;
   const i = songs.findIndex((s) => s.key === state.current);
-  select(songs[(i + delta + songs.length) % songs.length].key);
+  // No current song in the list (none selected, or hidden by a filter): J starts at the first, K at the last.
+  const next = i === -1 ? (delta > 0 ? 0 : songs.length - 1) : (i + delta + songs.length) % songs.length;
+  select(songs[next].key);
 }
 
 function playOnly(which) {
   const p = state.players?.[which]; if (!p) return;
-  p.paused ? p.play() : p.pause();
+  p.paused ? play(p) : p.pause();
 }
 
 document.addEventListener("keydown", (e) => {
@@ -377,7 +396,7 @@ document.addEventListener("keydown", (e) => {
   switch (e.key) {
     case "1": playOnly("a"); break;
     case "2": playOnly("b"); break;
-    case " ": e.preventDefault(); if (playing) playing.pause(); else state.players?.a?.play(); break;
+    case " ": e.preventDefault(); if (playing) playing.pause(); else if (state.players?.a) play(state.players.a); break;
     case "j": case "J": step(1); break;
     case "k": case "K": step(-1); break;
     case "ArrowRight": if (playing) { playing.currentTime += 10; e.preventDefault(); } break;
@@ -388,7 +407,12 @@ document.addEventListener("keydown", (e) => {
 });
 
 $("pick-gen").addEventListener("change", async (e) => { await loadGenerated([...e.target.files]); renderGenres(); renderList(); renderDeck(); });
-$("pick-ref").addEventListener("change", (e) => { loadRefs([...e.target.files]); renderList(); renderDeck(); });
+$("pick-ref").addEventListener("change", (e) => {
+  loadRefs([...e.target.files]);
+  renderList();
+  // Re-render the deck (which restarts its players) only when nothing is playing.
+  if (![...document.querySelectorAll("audio")].some((x) => !x.paused)) renderDeck();
+});
 for (const id of ["q", "genre-filter", "heard-filter"]) $(id).addEventListener("input", renderList);
 renderList(); renderDeck();
 </script>
