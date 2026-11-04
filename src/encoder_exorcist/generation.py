@@ -10,8 +10,10 @@ Every song gets a deterministic seed derived from artist, title and seed index, 
 use the same noise for the same song. For every song the generator writes
   <output_dir>/<config>/audio/<song_id>.flac         generated audio
   <output_dir>/<config>/activations/<song_id>.npz    mean-pooled activations (ActivationRecorder, docs/hook_points.md)
-and appends a row to <output_dir>/<config>/manifest.csv. Songs already in the manifest (with both files on disk) are
-skipped, so an interrupted run continues where it stopped. Songs that fail go to failed.csv and are retried next run.
+and appends a row to <output_dir>/<config>/manifest.csv. Songs already in the manifest with both files on disk and the
+same duration are skipped, so an interrupted run continues where it stopped; at the start of a run the manifest is
+rewritten without rows that no longer qualify (missing files, other duration, a row cut short by a killed process,
+duplicates). Songs that fail go to failed.csv (the failures of the last run) and are retried next run.
 """
 
 import csv
@@ -21,6 +23,7 @@ import shutil
 import tempfile
 import time
 import zlib
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,8 +110,7 @@ def load_jobs(csv_paths: Iterable[Path], n_seeds: int = 1) -> list[SongJob]:
                         seed_index=seed_index,
                     )
                 )
-    ids = [job.song_id for job in jobs]
-    duplicates = sorted({song_id for song_id in ids if ids.count(song_id) > 1})
+    duplicates = sorted(song_id for song_id, n in Counter(job.song_id for job in jobs).items() if n > 1)
     if duplicates:
         raise ValueError(f"songs with the same id (artist + title): {duplicates}")
     return jobs
@@ -160,10 +162,11 @@ GenerateFn = Callable[[SongJob, Path, Path], dict[str, Any]]
 class GenerationRun:
     """Output folder of one configuration: file paths, the manifest and resuming."""
 
-    def __init__(self, output_dir: Path, config_name: str) -> None:
+    def __init__(self, output_dir: Path, config_name: str, duration: float = DURATION) -> None:
         if config_name not in CONFIGS:
             raise ValueError(f"unknown configuration {config_name!r}, choose from {list(CONFIGS)}")
         self.config_name = config_name
+        self.duration = duration
         self.dir = output_dir / config_name
         self.audio_dir = self.dir / "audio"
         self.activations_dir = self.dir / "activations"
@@ -176,21 +179,42 @@ class GenerationRun:
     def activations_path(self, job: SongJob) -> Path:
         return self.activations_dir / f"{job.song_id}.npz"
 
-    def done_ids(self) -> set[str]:
-        """Songs in the manifest whose audio and activations both exist."""
-        return {
-            row["song_id"]
-            for row in load_records(self.manifest_path)
-            if (self.dir / row["audio_path"]).exists() and (self.dir / row["activations_path"]).exists()
-        }
+    def _is_done(self, row: dict) -> bool:
+        """A complete manifest row for this run's duration whose audio and activations both exist."""
+        if any(row.get(field) is None for field in MANIFEST_FIELDS):  # cut short when the process was killed
+            return False
+        try:
+            same_duration = float(row["duration"]) == self.duration
+        except ValueError:
+            return False
+        return (
+            same_duration and (self.dir / row["audio_path"]).exists() and (self.dir / row["activations_path"]).exists()
+        )
 
-    def run(self, jobs: list[SongJob], generate: GenerateFn, duration: float = DURATION) -> tuple[int, int]:
+    def done_rows(self) -> dict[str, dict]:
+        """Manifest rows of finished songs by song_id (the last row wins if a song appears twice)."""
+        return {row["song_id"]: row for row in load_records(self.manifest_path) if self._is_done(row)}
+
+    def pending(self, jobs: list[SongJob]) -> list[SongJob]:
+        """Jobs that still have to be generated."""
+        done = self.done_rows()
+        return [job for job in jobs if job.song_id not in done]
+
+    def run(self, jobs: list[SongJob], generate: GenerateFn) -> tuple[int, int]:
         """Generate every job not done yet; returns (generated, failed). Failures are logged and saved, not raised."""
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.activations_dir.mkdir(parents=True, exist_ok=True)
-        done = self.done_ids()
+        done = self.done_rows()
+        if self.manifest_path.exists():
+            save_records(self.manifest_path, MANIFEST_FIELDS, list(done.values()))  # drop stale and duplicate rows
         todo = [job for job in jobs if job.song_id not in done]
-        logger.info("%s: %d songs, %d already done, %d to generate", self.config_name, len(jobs), len(done), len(todo))
+        logger.info(
+            "%s: %d songs, %d already done, %d to generate",
+            self.config_name,
+            len(jobs),
+            len(jobs) - len(todo),
+            len(todo),
+        )
 
         failed: list[dict] = []
         generated = 0
@@ -209,7 +233,7 @@ class GenerationRun:
                     "song_id": job.song_id,
                     "config": self.config_name,
                     "seed": job.seed,
-                    "duration": duration,
+                    "duration": self.duration,
                     "audio_path": self.audio_path(job).relative_to(self.dir).as_posix(),
                     "activations_path": self.activations_path(job).relative_to(self.dir).as_posix(),
                     "generation_time_s": f"{elapsed:.2f}",
@@ -271,11 +295,12 @@ class AceStepGenerator:
         params = build_params(job, self.config_name, self.duration)
         config = GenerationConfig(batch_size=1, use_random_seed=False, seeds=[job.seed], audio_format="flac")
         with tempfile.TemporaryDirectory(dir=audio_path.parent) as tmp_dir:
-            with self.recorder.attach(self.dit_handler.model):
+            with self.recorder.attach(self.dit_handler.model):  # attach() starts from a clean recorder
                 result = generate_music(self.dit_handler, self.llm_handler, params, config, save_dir=tmp_dir)
-            record = self.recorder.pop_song()  # also resets the recorder after a failed generation
+            # Check the result first: after a failed generation pop_song() would only report missing hook points.
             if not result.success or not result.audios or not result.audios[0]["path"]:
                 raise RuntimeError(f"generation failed: {result.error or result.status_message}")
+            record = self.recorder.pop_song()
             check_record(record)
 
             tmp_npz = Path(tmp_dir) / "activations.npz"
@@ -324,11 +349,11 @@ class AceStepGenerator:
         try:
             with tempfile.TemporaryDirectory() as tmp_dir, self.recorder.attach(model):
                 result = generate_music(self.dit_handler, self.llm_handler, params, config, save_dir=tmp_dir)
+            assert result.success, f"generation failed: {result.error or result.status_message}"
             record = self.recorder.pop_song()
         finally:
             for handle in handles:
                 handle.remove()
-        assert result.success, f"generation failed: {result.error}"
         check_record(record)
 
         t_aud = round(self.duration * AUDIO_FRAMES_PER_SECOND / 2)

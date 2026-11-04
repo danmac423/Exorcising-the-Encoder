@@ -91,6 +91,36 @@ def test_run_writes_manifest_and_resumes(tmp_path):
     seen.clear()
     run.run(jobs, fake_generate)
     assert seen == ["ariana_grande_bad_s0", "ariana_grande_two_s0"]
+    # ...and the manifest keeps one row per song.
+    assert sorted(row["song_id"] for row in load_records(run.manifest_path)) == [
+        "ariana_grande_one_s0",
+        "ariana_grande_two_s0",
+    ]
+
+
+def write_files(song: SongJob, audio_path: Path, activations_path: Path) -> dict:
+    audio_path.write_bytes(b"flac")
+    activations_path.write_bytes(b"npz")
+    return {}
+
+
+def test_run_drops_a_truncated_manifest_row(tmp_path):
+    run = GenerationRun(tmp_path, "no-cot")
+    run.run([job("One"), job("Two")], write_files)
+    lines = run.manifest_path.read_text(encoding="utf-8").splitlines()
+    run.manifest_path.write_text("\n".join([*lines[:-1], lines[-1][:20]]) + "\n", encoding="utf-8")  # killed mid-write
+
+    assert [j.song_id for j in run.pending([job("One"), job("Two")])] == ["ariana_grande_two_s0"]
+    run.run([job("One"), job("Two")], write_files)
+    assert len(load_records(run.manifest_path)) == 2
+
+
+def test_other_duration_is_not_done(tmp_path):
+    GenerationRun(tmp_path, "no-cot", duration=30).run([job()], write_files)
+    run = GenerationRun(tmp_path, "no-cot", duration=180)
+    assert run.pending([job()]) == [job()]
+    run.run([job()], write_files)
+    assert [row["duration"] for row in load_records(run.manifest_path)] == ["180"]
 
 
 def test_run_rejects_unknown_config(tmp_path):

@@ -42,14 +42,20 @@ def main() -> None:
     jobs = load_jobs(csv_paths, n_seeds=args.seeds)
     if args.limit is not None:
         jobs = jobs[: args.limit]
-    generator = AceStepGenerator(args.config, duration=args.duration)
+    if not jobs:
+        sys.exit("no songs to generate (empty CSV files or --limit 0)")
+    run = GenerationRun(args.output_dir, args.config, duration=args.duration)
 
     if args.check:
+        generator = AceStepGenerator(args.config, duration=run.duration)
         print(json.dumps(generator.verify_hooks(jobs[0]), indent=2))
         print("hook check passed")
         return
 
-    generated, failed = GenerationRun(args.output_dir, args.config).run(jobs, generator, duration=args.duration)
+    if not run.pending(jobs):  # skip loading several GB of weights when everything is done
+        print(f"all {len(jobs)} songs already generated in {run.dir}")
+        return
+    generated, failed = run.run(jobs, AceStepGenerator(args.config, duration=run.duration))
     print(f"generated {generated}, failed {failed}")
     if failed:
         sys.exit(1)
