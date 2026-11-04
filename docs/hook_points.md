@@ -2,7 +2,7 @@
 
 Goal: reproduce the activation extraction of *Ghost in the Decoder* (Sec. 3.2 and 3.3) with PyTorch hooks.
 Sources: the paper, `checkpoints/acestep-v15-turbo/modeling_acestep_v15_turbo.py` and `config.json`.
-Shapes below are derived from code and config, **not yet measured** (see "Verification").
+Shapes below are derived from code and config and were **measured on the real model** on 2026-11-03 (see "Verification").
 
 Notation: `m = dit_handler.model`, `B` = batch (1), `T_lyr` = lyric tokens, `T_txt` = caption tokens,
 `T_cond = T_lyr + T_timbre + T_txt` (merged sequence), `T_aud = 2250` (180 s at 25 Hz, patch size 2; the 25 Hz rate is inferred from `lm_hints_25Hz`).
@@ -102,6 +102,21 @@ Register shape-recording hooks, generate one 180 s song with `bpm=None, key=None
 - `lyric_out`, `merged_out` fire twice on the real model (the handler pre-computes the conditioning, then `generate_audio` recomputes it) with identical output; the recorder keeps the first call and only warns if a repeat differs;
 - `T_cond == T_lyr + T_timbre + T_txt`, and the merged mask is all ones (the guard in `merged_out` enforces it; check it in with-CoT too);
 - `AceStepHandler` generation reaches the same denoising loop as `generate_audio` (not verified).
+
+**Result (2026-11-03, RTX 5070 Ti, `make generate-check`, both configurations):** all checks pass.
+
+| | no-cot | with-cot |
+|---|---|---|
+| `T_aud` | 2250 | 2250 |
+| `pre_xattn` / `post_xattn` calls per layer | 8 | 8 |
+| `k`/`v` calls per layer | 1 | 1 |
+| `lyric_out`, `text_out`, `timbre_out`, `merged_out` calls | 2 (identical, no warning) | 2 (identical, no warning) |
+| `cond_embed_out` calls | 8 | 8 |
+| `T_txt` (first song) | 54 (caption template only, the caption is empty) | 178 (LM-written caption) |
+| batch dim | 1 (turbo runs no CFG batch) | 1 |
+| merged mask all ones | yes | yes |
+
+`generate_music` (the path used by `scripts/generate_songs.py`) runs the same denoising loop the hooks expect. The check is repeatable with `make generate-check [CONFIG=with-cot]`.
 
 ## 8. Not specified by the paper
 
