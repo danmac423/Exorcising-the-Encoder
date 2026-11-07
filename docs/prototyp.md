@@ -1,13 +1,13 @@
 # Prototyp: stan projektu
 
-*Stan na 4.11.2026.*
+*Stan na 7.11.2026.*
 
 Ten dokument zbiera, co zrobiliśmy w ramach prototypu i jakie mamy wyniki.
 
 ## W skrócie
 
 - **Cały proces od tekstów do wyniku sondy działa.** Zbieramy teksty i anonimizujemy nazwy artystów. Potem ACE-Step generuje piosenki, a hooki (przechwytywacze aktywacji) w tym czasie zapisują aktywacje modelu. Na końcu sonda liniowa uczy się na tych aktywacjach.
-- **Dekodowalność tożsamości artysty (RQ1) jest potwierdzona.** ACE-Step 1.5 koduje tożsamość artysty na podstawie samego tekstu, bez nazwy artysty. Sonda na wyjściu enkodera tekstu piosenki rozpoznaje artystę w **55,5%** przypadków przy losowym poziomie 5% (20 artystów, p = 0,001).
+- **Dekodowalność tożsamości artysty (RQ1) jest potwierdzona.** ACE-Step 1.5 koduje tożsamość artysty na podstawie samego tekstu, bez nazwy artysty. Na 1000 wygenerowanych piosenkach sonda na enkoderze tekstu piosenki rozpoznaje artystę w **63%** przypadków przy losowym poziomie 5% (20 artystów, p = 0,001).
 
 ## Przebieg przetwarzania
 
@@ -33,13 +33,13 @@ flowchart LR
 | rock | Radiohead, Paramore, Linkin Park, My Chemical Romance |
 | hip-hop | Kanye West, Kendrick Lamar, Tyler, The Creator, Drake |
 | R&B | The Weeknd, Tinashe, Rihanna, Frank Ocean |
-| country | Taylor Swift, Dolly Parton, Kacey Musgraves, Johnny Cash |
+| country | Taylor Swift, Dolly Parton, Kacey Musgraves, Zach Bryan |
 
-Zbiór referencyjny to **20 utworów na artystę, czyli 400 tekstów**, wydanych między 1955 a 2024 r. Status treningowy tych utworów jest nieznany. Są popularne i wydane przed modelem, więc prawdopodobnie były w danych treningowych.
+Zbiór referencyjny to **50 utworów na artystę, czyli 1000 tekstów**, wydanych między 1962 a 2024 r. Status treningowy tych utworów jest nieznany. Są popularne i wydane przed modelem, więc prawdopodobnie były w danych treningowych. Pierwsza wersja zbioru miała 20 utworów na artystę i Johnny'ego Casha zamiast Zacha Bryana. Na niej powstał pierwszy przebieg generacji i sondy (400 piosenek).
 
-**Anonimizacja.** Moduł `encoder_exorcist/data/anonymization.py`, uruchamiany przez `make anonymize`. Nazwy artystów i ich aliasy pochodzą z MusicBrainz. Każde wystąpienie w tekście jest zastępowane podobnie brzmiącym słowem z CMUdict, z tą samą liczbą sylab i tym samym akcentem. Przykłady: „Kendrick” → „carrick”, „Rihanna” → „hourihan”. Możliwe są też ręczne zamiany, np. „Kanye” → „kon-yay”. W 400 tekstach podmieniono **108 wystąpień u 9 artystów**.
+**Anonimizacja.** Moduł `encoder_exorcist/data/anonymization.py`, uruchamiany przez `make anonymize`. Nazwy artystów i ich aliasy pochodzą z MusicBrainz. Każde wystąpienie w tekście jest zastępowane podobnie brzmiącym słowem z CMUdict, z tą samą liczbą sylab i tym samym akcentem. Wymowę nazw spoza słownika przewiduje model g2p. Przykłady: „Kendrick” → „eric”, „Rihanna” → „hourihan”, „Kanye” → „candy”. Możliwe są też ręczne zamiany. W 1000 tekstów podmieniono **151 wystąpień u 11 artystów**.
 
-**Nagrania referencyjne.** Moduł `encoder_exorcist/data/audio_reference.py`, uruchamiany przez `make audio`. Oryginały są pobierane z YouTube'a jako WAV. Leżą na Drive w folderze `Audio References`, ok. 17 GB w zipach po gatunkach.
+**Nagrania referencyjne.** Moduł `encoder_exorcist/data/audio_reference.py`, uruchamiany przez `make audio`. Oryginały są pobierane z YouTube'a jako WAV. Leżą na Drive w folderze `Audio References`, w zipach po gatunkach.
 
 ## 2. Model i budżet obliczeniowy
 
@@ -50,7 +50,7 @@ Używamy modelu ACE-Step 1.5 w wariancie turbo (8 kroków dyfuzji), w wersji prz
 | 30 s | 1,5 s | 6,8 s |
 | 180 s | 4,8 s | 34,8 s |
 
-400 piosenek po 180 s to **ok. 35 min w no-CoT** i ok. 5 h w with-CoT. Najwolniejszy jest 5Hz LM, który generuje kody audio token po tokenie.
+1000 piosenek po 180 s to **ok. 1,5 h w no-CoT** i ok. 10–13 h w with-CoT. Najwolniejszy jest 5Hz LM, który generuje kody audio token po tokenie.
 
 Ważny wniosek z analizy kodu ACE-Step: tekst piosenki jest przetwarzany w kontekście tylko przez **8-warstwowy enkoder tekstu piosenki (lyric encoder)** wewnątrz DiT. Qwen3-Embedding przetwarza wyłącznie opis stylu, a dla tekstu daje jedynie tablicę embeddingów tokenów. Dlatego hooki i interwencja LEACE dotyczą enkodera tekstu piosenki.
 
@@ -78,7 +78,7 @@ Kształty i liczby wywołań **zweryfikowaliśmy na prawdziwym modelu** w obu tr
 
 Ziarno losowe każdej piosenki jest stałe, więc ta sama piosenka ma ten sam szum w obu trybach. Przerwana generacja wznawia się od miejsca przerwania.
 
-**Wynik:** 400 piosenek no-CoT (20 artystów × 20 tekstów × 1 ziarno losowe), bez błędów, ok. 5 s na piosenkę. Pliki to `outputs/generated/no-cot/` z audio FLAC, aktywacjami `.npz` i `manifest.csv`. Na Drive przygotowane są zipy z MP3 (ok. 1,7 GB) i z aktywacjami.
+**Wynik:** 1000 piosenek no-CoT (20 artystów × 50 tekstów × 1 ziarno losowe), bez błędów, ok. 5 s na piosenkę. Pliki to `outputs/generated_50songs/no-cot/` z audio FLAC, aktywacjami `.npz` i `manifest.csv`. Na Drive przygotowane są zipy z MP3 (5 gatunków po ok. 860 MB) i z aktywacjami (ok. 2 GB).
 
 ## 5. Sonda liniowa: wynik dla RQ1 (PR #9)
 
@@ -87,25 +87,26 @@ Ziarno losowe każdej piosenki jest stałe, więc ta sama piosenka ma ten sam sz
 - 95% przedziały ufności;
 - test permutacyjny z 1000 permutacjami.
 
-Wykresy są w [notebooks/probe_results.ipynb](../notebooks/probe_results.ipynb).
+Wykresy są w [notebooks/probe_results.ipynb](../notebooks/probe_results.ipynb). Wyniki dla 1000 piosenek:
 
 | Punkt pomiaru | Dokładność | Przedział ufności 95% | p |
 |---|---:|---|---:|
-| wyjście enkodera tekstu (`lyric_out`) | **55,5%** | 50,6–60,3% | 0,001 |
-| warstwa L4 enkodera tekstu | 55,3% | 50,4–60,1% | 0,001 |
-| sekwencja warunkująca DiT (`merged_out`) | 51,5% | 46,6–56,4% | 0,001 |
-| punkt odniesienia: TF-IDF z samych słów | 42,0% | 37,3–46,9% | 0,001 |
-| punkt odniesienia: embeddingi tokenów Qwen3 (wejście enkodera) | 37,8% | 33,1–42,6% | 0,001 |
-| kontrola: opis i barwa (stałe w no-CoT) | 5,0% | 3,3–7,6% | 1 |
+| warstwa L5 enkodera tekstu | **63,2%** | 60,2–66,1% | 0,001 |
+| sekwencja warunkująca DiT (`merged_out`) | 62,8% | 59,8–65,7% | 0,001 |
+| wyjście enkodera tekstu (`lyric_out`) | 62,1% | 59,1–65,1% | 0,001 |
+| punkt odniesienia: TF-IDF z samych słów | 53,8% | 50,7–56,9% | 0,001 |
+| punkt odniesienia: embeddingi tokenów Qwen3 (wejście enkodera) | 43,8% | 40,8–46,9% | 0,001 |
+| kontrola: opis i barwa (stałe w no-CoT) | 5,0% | 3,8–6,5% | 1 |
 | poziom losowy (20 artystów) | 5,0% | | |
 
 ![Dokładność w kolejnych warstwach enkodera tekstu](img/probe_lyric_encoder.png)
 
 **Wnioski:**
-- **Tożsamość artysty da się odczytać z samego tekstu.** Enkoder tekstu dodaje coś ponad same słowa, bo bije oba punkty odniesienia. Dokładność rośnie w pierwszych warstwach i od L3 utrzymuje się na stałym poziomie.
-- **Sygnał trafia do DiT.** Projekcje K/V atencji krzyżowej zachowują ok. 50%, bo liczą się bezpośrednio z sekwencji z tekstem. W stanach audio sygnał jest słabszy (15–43%): najmocniejszy w pierwszych warstwach tuż po atencji krzyżowej, słabnie z głębokością i w kolejnych krokach odszumiania.
+- **Tożsamość artysty da się odczytać z samego tekstu.** Enkoder tekstu dodaje coś ponad same słowa, bo od warstwy L3 bije oba punkty odniesienia. Dokładność rośnie w pierwszych warstwach i od L3 utrzymuje się na stałym poziomie.
+- **Sygnał trafia do DiT.** Projekcje K/V atencji krzyżowej zachowują 52–60%, bo liczą się bezpośrednio z sekwencji z tekstem. W stanach audio sygnał jest słabszy (16–53%): najmocniejszy w pierwszych warstwach tuż po atencji krzyżowej, słabnie z głębokością i w pierwszych krokach odszumiania.
 - **Punkty kontrolne zachowują się poprawnie.** Strumienie stałe w trybie no-CoT wychodzą dokładnie na poziomie losowym.
-- **Dokładność bardzo różni się między artystami:** od 10% (Rihanna) do 85% (Radiohead). Tego potrzebuje RQ1, czyli korelacji dekodowalności z kopiowaniem.
+- **Dokładność bardzo różni się między artystami:** od 26% (Rihanna) do 94% (Zach Bryan). Tego potrzebuje RQ1, czyli korelacji dekodowalności z kopiowaniem.
+- **Wynik jest stabilny.** Pierwszy przebieg na 400 piosenkach dał ten sam obraz, tylko o ok. 7 punktów procentowych niżej (55,5% na `lyric_out`, TF-IDF 42%). Więcej danych treningowych podnosi wszystkie sondy, a przedziały ufności są węższe.
 
 ![Dokładność w warstwach DiT](img/probe_dit_layers.png)
 
@@ -126,8 +127,11 @@ make install
 make data && make anonymize      # teksty i anonimizacja (klucze API w .env)
 make audio                       # oryginalne nagrania (YouTube)
 make generate-check              # sprawdzenie hooków na jednej piosence
-make generate                    # 400 piosenek no-CoT + aktywacje (~35 min, GPU)
-make probe                       # sondy, ~25 min (PERMUTATIONS=0: kilka minut)
+
+# 1000 piosenek no-CoT + aktywacje (~1,5 h, GPU)
+make generate CSV="outputs/anonymized_50songs/lyrics_*.csv" GENERATED_DIR=outputs/generated_50songs
+# sondy, ~3,5 h na 20 rdzeniach (PERMUTATIONS=0: dużo krócej, bez p-wartości)
+make probe GENERATED_DIR=outputs/generated_50songs LYRICS_DIR=outputs/anonymized_50songs PROBE_DIR=outputs/probe_50songs
 ```
 
 Wykresy powstają w `notebooks/probe_results.ipynb`.
@@ -140,4 +144,5 @@ Wykresy powstają w `notebooks/probe_results.ipynb`.
 | Wybór artystów (WIMU-9) | ✅ |
 | Teksty, anonimizacja, nagrania (WIMU-10, 22, 25) | ✅ |
 | Skrypt generacji (WIMU-20), sonda (WIMU-21) | ✅ |
+| Generacja 1000 piosenek, 50 na artystę (WIMU-13) | ✅ |
 | Analiza literatury (WIMU-7) | ✅ |
