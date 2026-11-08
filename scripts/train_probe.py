@@ -1,7 +1,7 @@
 """Train linear probes for artist identity on the activations of one generation run.
 
-Reads outputs/generated/<config>/ (manifest + activations) and the lyrics in outputs/anonymized/lyrics_*.csv (for the
-baselines), writes outputs/probe/<config>/results.csv (one row per hook point) and per_artist.csv. The protocol is
+Reads outputs/generated/<config>/ (manifest + activations) and the lyrics in <lyrics-dir>/lyrics_*.csv (for the
+baselines, default outputs/anonymized/), writes outputs/probe/<config>/results.csv (one row per hook point) and per_artist.csv. The protocol is
 described in encoder_exorcist.probing; settings are passed through make, see `make probe` in the Makefile.
 
 Usage:
@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="no-cot", help="generation run, a folder in --generated-dir")
     parser.add_argument("--generated-dir", type=Path, default=PROJECT_ROOT / "outputs" / "generated")
+    parser.add_argument("--lyrics-dir", type=Path, default=PROJECT_ROOT / "outputs" / "anonymized")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "outputs" / "probe")
     parser.add_argument("--permutations", type=int, default=N_PERMUTATIONS, help="0 disables the permutation test")
     parser.add_argument("--permute", nargs="*", default=list(DEFAULT_PERMUTED), help="points to permutation-test")
@@ -41,7 +42,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
-    lyrics_csvs = sorted((PROJECT_ROOT / "outputs" / "anonymized").glob("lyrics_*.csv"))
+    lyrics_csvs = sorted(args.lyrics_dir.glob("lyrics_*.csv"))
     data = load_probe_data(args.generated_dir / args.config, lyrics_csvs)
     print(f"{len(data.song_ids)} songs, {len(set(data.artists))} artists, {len(data.features)} hook points")
 

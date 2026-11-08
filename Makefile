@@ -60,8 +60,11 @@ audio:
 #   SEEDS     generations per song (default: 1)
 #   LIMIT     only the first N songs, for a quick test
 #   CSV       lyrics CSV files, space separated (default: all outputs/anonymized/lyrics_*.csv)
+#   GENERATED_DIR  where the runs go (default: outputs/generated)
 # e.g.: make generate CONFIG=with-cot SEEDS=2
-GENERATE_ARGS = $(CSV) $(if $(CONFIG),--config $(CONFIG)) $(if $(SEEDS),--seeds $(SEEDS)) $(if $(LIMIT),--limit $(LIMIT))
+#       make generate CSV="outputs/anonymized_50songs/lyrics_*.csv" GENERATED_DIR=outputs/generated_50songs
+GENERATE_ARGS = $(CSV) $(if $(CONFIG),--config $(CONFIG)) $(if $(SEEDS),--seeds $(SEEDS)) $(if $(LIMIT),--limit $(LIMIT)) \
+	$(if $(GENERATED_DIR),--output-dir $(GENERATED_DIR))
 generate:
 	uv run python scripts/generate_songs.py $(GENERATE_ARGS)
 
@@ -70,12 +73,18 @@ generate-check:
 	uv run python scripts/generate_songs.py --check $(GENERATE_ARGS)
 
 # Train linear probes for artist identity on the activations of a generation run (see encoder_exorcist/probing.py).
-# Reads outputs/generated/<CONFIG>/, writes outputs/probe/<CONFIG>/results.csv and per_artist.csv.
-#   CONFIG        generation run: no-cot (default) or with-cot
-#   PERMUTATIONS  permutations for the stream outputs (except timbre_out), lyric layers and baselines (default: 1000, 0 disables the test)
+# Reads GENERATED_DIR/<CONFIG>/, writes PROBE_DIR/<CONFIG>/results.csv and per_artist.csv.
+#   CONFIG         generation run: no-cot (default) or with-cot
+#   PERMUTATIONS   permutations for the stream outputs (except timbre_out), lyric layers and baselines (default: 1000, 0 disables the test)
+#   GENERATED_DIR  generation runs (default: outputs/generated)
+#   LYRICS_DIR     lyrics_*.csv the songs were generated from, for the baselines (default: outputs/anonymized)
+#   PROBE_DIR      where the results go (default: outputs/probe)
 # e.g.: make probe CONFIG=with-cot PERMUTATIONS=0
+#       make probe GENERATED_DIR=outputs/generated_50songs LYRICS_DIR=outputs/anonymized_50songs PROBE_DIR=outputs/probe_50songs
 probe:
-	uv run python scripts/train_probe.py $(if $(CONFIG),--config $(CONFIG)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS))
+	uv run python scripts/train_probe.py $(if $(CONFIG),--config $(CONFIG)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS)) \
+		$(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) $(if $(LYRICS_DIR),--lyrics-dir $(LYRICS_DIR)) \
+		$(if $(PROBE_DIR),--output-dir $(PROBE_DIR))
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +
