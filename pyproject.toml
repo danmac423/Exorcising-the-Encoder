@@ -31,6 +31,10 @@ dependencies = [
     # Audio embeddings (encoder_exorcist.embeddings)
     "laion-clap>=1.1.6",
     "muq",
+    # CLEWS-DVI (code cloned to checkpoints/clews-code, see docs/clews.md)
+    "omegaconf>=2.3",
+    "einops>=0.8",
+    "nnaudio>=0.3.3",
 ]
 
 [project.scripts]

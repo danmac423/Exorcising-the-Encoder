@@ -1,5 +1,5 @@
 
-.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe embed probe-embeddings clean
+.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe embed probe-embeddings clews clean
 
 install:
 	uv sync
@@ -100,6 +100,17 @@ probe-embeddings:
 		$(if $(MODELS),--models $(MODELS)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS)) \
 		$(if $(EMBED_DIR),--embeddings-dir $(EMBED_DIR)) $(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) \
 		$(if $(PROBE_EMB_DIR),--output-dir $(PROBE_EMB_DIR))
+
+# Compare generated songs with the original recordings using CLEWS-DVI (see encoder_exorcist/clews.py, docs/clews.md).
+# Reads GENERATED_DIR/<CONFIG>/ and AUDIO_DIR, writes CLEWS_DIR/<CONFIG>/ (results.csv with Retrieval@K, per_song.csv).
+#   CONFIG         generation run: no-cot (default) or with-cot
+#   GENERATED_DIR  generation runs (default: outputs/generated), AUDIO_DIR  original recordings (default: audio_reference)
+#   OUT_DIR        where the results go (default: outputs/clews)
+#   LIMIT          only the first N generated songs, for a quick test
+# e.g.: make clews CONFIG=with-cot
+clews:
+	uv run python scripts/compare_clews.py $(if $(CONFIG),--config $(CONFIG)) $(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) \
+		$(if $(AUDIO_DIR),--audio-dir $(AUDIO_DIR)) $(if $(OUT_DIR),--output-dir $(OUT_DIR)) $(if $(LIMIT),--limit $(LIMIT))
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +

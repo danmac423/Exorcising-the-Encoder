@@ -59,7 +59,9 @@ def download_audio(
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
         "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
         "noplaylist": True,
-        "remote_components": ["ejs:github"],  # YouTube JS challenge solver, without it many videos fail (403 / not available)
+        "remote_components": [
+            "ejs:github"
+        ],  # YouTube JS challenge solver, without it many videos fail (403 / not available)
         "quiet": True,
         "no_warnings": True,
     }
