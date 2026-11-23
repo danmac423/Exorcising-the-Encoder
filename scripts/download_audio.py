@@ -21,18 +21,17 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=default_output_dir())
     parser.add_argument("--artist", help="download just one song (together with --title), ignoring the CSV files")
     parser.add_argument("--title")
-    parser.add_argument("--cookies-from-browser", help="use this browser's YouTube login, e.g. chrome or safari")
     parser.add_argument("--url", help="with --artist/--title: download this video instead of the first search result")
     args = parser.parse_args()
     if args.artist or args.title:
         if not (args.artist and args.title):
             parser.error("--artist and --title go together")
-        print(f"Saved {download_one(args.artist, args.title, args.output_dir, args.url, args.cookies_from_browser)}")
+        print(f"Saved {download_one(args.artist, args.title, args.output_dir, args.url)}")
         return
     csv_files = args.csv_files or sorted((PROJECT_ROOT / "outputs").glob("lyrics_*.csv"))
     if not csv_files:
         parser.error("no lyrics CSV files found, run `make data` first")
-    download_all(csv_files, args.output_dir, args.cookies_from_browser)
+    download_all(csv_files, args.output_dir)
 
 
 if __name__ == "__main__":

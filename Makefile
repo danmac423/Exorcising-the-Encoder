@@ -49,11 +49,9 @@ anonymize:
 # Download reference audio (wav) for the songs in the lyrics CSV files.
 #   CSV         lyrics CSV files, space separated (default: all outputs/lyrics_*.csv)
 #   AUDIO_DIR   where the wav files go (default: audio_reference)
-#   COOKIES     browser whose YouTube login to use, e.g. chrome (needed when YouTube asks to sign in)
 # e.g.: make audio CSV=outputs/lyrics_pop_4artists_20songs.csv
 audio:
-	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR)) $(if $(COOKIES),--cookies-from-browser $(COOKIES))
-
+	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR))
 # Generate songs from the anonymized lyrics with ACE-Step and record activations (see encoder_exorcist/generation.py).
 # Reads outputs/anonymized/lyrics_*.csv, writes outputs/generated/<CONFIG>/ (audio, activations, manifest.csv).
 # Interrupted runs continue where they stopped.
