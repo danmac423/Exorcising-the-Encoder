@@ -27,6 +27,7 @@ dependencies = [
     "yt-dlp>=2026.10.26",
     "imageio-ffmpeg>=0.8.0",
     "scikit-learn>=1.7",
+    "curl-cffi>=0.17.0",
 ]
 
 [project.scripts]

@@ -33,6 +33,7 @@ from pathlib import Path
 
 import lyricsgenius
 import requests
+from curl_cffi import requests as curl_requests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -218,6 +219,9 @@ class SongFetcher:
             remove_section_headers=True,
             skip_non_songs=True,
         )
+        # Cloudflare challenges plain `requests` (403), so impersonate a browser's TLS fingerprint and headers
+        self.genius._session = curl_requests.Session(impersonate="chrome")
+        self.genius._session.headers.update({"application": "LyricsGenius"})
         self._default_is_lyrics = self.genius._result_is_lyrics
         self.genius._result_is_lyrics = self._is_valid_song  # ty: ignore[invalid-assignment]
 
