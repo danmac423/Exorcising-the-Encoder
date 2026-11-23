@@ -1,5 +1,5 @@
 
-.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe embed clean
+.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe embed probe-embeddings clean
 
 install:
 	uv sync
@@ -49,9 +49,10 @@ anonymize:
 # Download reference audio (wav) for the songs in the lyrics CSV files.
 #   CSV         lyrics CSV files, space separated (default: all outputs/lyrics_*.csv)
 #   AUDIO_DIR   where the wav files go (default: audio_reference)
+#   COOKIES     browser whose YouTube login to use, e.g. chrome (needed when YouTube asks to sign in)
 # e.g.: make audio CSV=outputs/lyrics_pop_4artists_20songs.csv
 audio:
-	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR))
+	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR)) $(if $(COOKIES),--cookies-from-browser $(COOKIES))
 
 # Generate songs from the anonymized lyrics with ACE-Step and record activations (see encoder_exorcist/generation.py).
 # Reads outputs/anonymized/lyrics_*.csv, writes outputs/generated/<CONFIG>/ (audio, activations, manifest.csv).
@@ -85,6 +86,20 @@ probe:
 	uv run python scripts/train_probe.py $(if $(CONFIG),--config $(CONFIG)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS)) \
 		$(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) $(if $(LYRICS_DIR),--lyrics-dir $(LYRICS_DIR)) \
 		$(if $(PROBE_DIR),--output-dir $(PROBE_DIR))
+
+# Train linear probes on the CLAP / MuQ-MuLan embeddings from `make embed` (see scripts/train_embedding_probe.py).
+# Writes PROBE_EMB_DIR/<SOURCE>[/<CONFIG>]/results.csv and per_artist.csv (all artists and within each genre).
+#   SOURCE         generated or reference (original recordings) (required)
+#   CONFIG         generation run for SOURCE=generated (default: no-cot)
+#   MODELS         space separated: clap mulan (default: both)
+#   PERMUTATIONS   permutation test size (default: 1000, 0 disables the test)
+#   EMBED_DIR, GENERATED_DIR  as for `make embed`; PROBE_EMB_DIR  where the results go (default: outputs/probe_embeddings)
+# e.g.: make probe-embeddings SOURCE=generated CONFIG=no-cot
+probe-embeddings:
+	uv run python scripts/train_embedding_probe.py --source $(SOURCE) $(if $(CONFIG),--config $(CONFIG)) \
+		$(if $(MODELS),--models $(MODELS)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS)) \
+		$(if $(EMBED_DIR),--embeddings-dir $(EMBED_DIR)) $(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) \
+		$(if $(PROBE_EMB_DIR),--output-dir $(PROBE_EMB_DIR))
 
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +

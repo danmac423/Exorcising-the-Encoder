@@ -46,30 +46,40 @@ def read_songs(csv_paths: list[Path]) -> list[tuple[str, str]]:
     return list(songs.values())
 
 
-def download_audio(artist: str, title: str, target: Path, url: str | None = None) -> None:
-    """Downloads the first search result (or `url`, if given) as wav to `target`; raises DownloadError on failure."""
+def download_audio(
+    artist: str, title: str, target: Path, url: str | None = None, cookies_from_browser: str | None = None
+) -> None:
+    """Downloads the first search result (or `url`, if given) as wav to `target`; raises DownloadError on failure.
+
+    `cookies_from_browser` (e.g. "chrome") lets yt-dlp use that browser's YouTube login, needed for age-restricted
+    videos and when YouTube asks to confirm you are not a bot."""
     options = {
         "format": "bestaudio/best",
         "outtmpl": str(target.with_suffix("")) + ".%(ext)s",
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
         "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
         "noplaylist": True,
+        "remote_components": ["ejs:github"],  # YouTube JS challenge solver, without it many videos fail (403 / not available)
         "quiet": True,
         "no_warnings": True,
     }
+    if cookies_from_browser:
+        options["cookiesfrombrowser"] = (cookies_from_browser,)
     with YoutubeDL(options) as ydl:
         ydl.download([url or search_query(artist, title)])
 
 
-def download_one(artist: str, title: str, output_dir: Path, url: str | None = None) -> Path:
+def download_one(
+    artist: str, title: str, output_dir: Path, url: str | None = None, cookies_from_browser: str | None = None
+) -> Path:
     """Downloads a single song (e.g. to retry a failed one); raises DownloadError on failure."""
     output_dir.mkdir(parents=True, exist_ok=True)
     target = audio_path(output_dir, artist, title)
-    download_audio(artist, title, target, url)
+    download_audio(artist, title, target, url, cookies_from_browser)
     return target
 
 
-def download_all(csv_paths: list[Path], output_dir: Path) -> None:
+def download_all(csv_paths: list[Path], output_dir: Path, cookies_from_browser: str | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     songs = read_songs(csv_paths)
     failed: list[dict] = []
@@ -80,7 +90,7 @@ def download_all(csv_paths: list[Path], output_dir: Path) -> None:
             continue
         print(f"[{i}/{len(songs)}] {artist} - {title}")
         try:
-            download_audio(artist, title, target)
+            download_audio(artist, title, target, cookies_from_browser=cookies_from_browser)
         except DownloadError as error:
             print(f"  failed: {error}")
             failed.append({"artist": artist, "title": title, "reason": ANSI_RE.sub("", str(error))})
