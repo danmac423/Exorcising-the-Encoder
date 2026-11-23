@@ -1,5 +1,5 @@
 
-.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe clean
+.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe embed probe-embeddings clews clean
 
 install:
 	uv sync
@@ -52,7 +52,6 @@ anonymize:
 # e.g.: make audio CSV=outputs/lyrics_pop_4artists_20songs.csv
 audio:
 	uv run python scripts/download_audio.py $(CSV) $(if $(AUDIO_DIR),--output-dir $(AUDIO_DIR))
-
 # Generate songs from the anonymized lyrics with ACE-Step and record activations (see encoder_exorcist/generation.py).
 # Reads outputs/anonymized/lyrics_*.csv, writes outputs/generated/<CONFIG>/ (audio, activations, manifest.csv).
 # Interrupted runs continue where they stopped.
@@ -86,6 +85,45 @@ probe:
 		$(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) $(if $(LYRICS_DIR),--lyrics-dir $(LYRICS_DIR)) \
 		$(if $(PROBE_DIR),--output-dir $(PROBE_DIR))
 
+# Train linear probes on the CLAP / MuQ-MuLan embeddings from `make embed` (see scripts/train_embedding_probe.py).
+# Writes PROBE_EMB_DIR/<SOURCE>[/<CONFIG>]/results.csv and per_artist.csv (all artists and within each genre).
+#   SOURCE         generated or reference (original recordings) (required)
+#   CONFIG         generation run for SOURCE=generated (default: no-cot)
+#   MODELS         space separated: clap mulan (default: both)
+#   PERMUTATIONS   permutation test size (default: 1000, 0 disables the test)
+#   EMBED_DIR, GENERATED_DIR  as for `make embed`; PROBE_EMB_DIR  where the results go (default: outputs/probe_embeddings)
+# e.g.: make probe-embeddings SOURCE=generated CONFIG=no-cot
+probe-embeddings:
+	uv run python scripts/train_embedding_probe.py --source $(SOURCE) $(if $(CONFIG),--config $(CONFIG)) \
+		$(if $(MODELS),--models $(MODELS)) $(if $(PERMUTATIONS),--permutations $(PERMUTATIONS)) \
+		$(if $(EMBED_DIR),--embeddings-dir $(EMBED_DIR)) $(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) \
+		$(if $(PROBE_EMB_DIR),--output-dir $(PROBE_EMB_DIR))
+
+# Compare generated songs with the original recordings using CLEWS-DVI (see encoder_exorcist/clews.py, docs/clews.md).
+# Reads GENERATED_DIR/<CONFIG>/ and AUDIO_DIR, writes CLEWS_DIR/<CONFIG>/ (results.csv with Retrieval@K, per_song.csv).
+#   CONFIG         generation run: no-cot (default) or with-cot
+#   GENERATED_DIR  generation runs (default: outputs/generated), AUDIO_DIR  original recordings (default: audio_reference)
+#   OUT_DIR        where the results go (default: outputs/clews)
+#   LIMIT          only the first N generated songs, for a quick test
+# e.g.: make clews CONFIG=with-cot
+clews:
+	uv run python scripts/compare_clews.py $(if $(CONFIG),--config $(CONFIG)) $(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) \
+		$(if $(AUDIO_DIR),--audio-dir $(AUDIO_DIR)) $(if $(OUT_DIR),--output-dir $(OUT_DIR)) $(if $(LIMIT),--limit $(LIMIT))
+
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +
 	rm -rf .coverage coverage.xml htmlcov dist build *.egg-info
+
+# Embed songs with LAION-CLAP or MuQ-MuLan (see encoder_exorcist/embeddings.py), writes EMBED_DIR/<MODEL>/<SOURCE>/.
+#   MODEL          clap or mulan (required)
+#   SOURCE         generated (songs of a generation run) or reference (audio_reference/) (required)
+#   CONFIG         generation run for SOURCE=generated (default: no-cot)
+#   GENERATED_DIR  generation runs (default: outputs/generated)
+#   AUDIO_DIR      reference recordings (default: audio_reference)
+#   EMBED_DIR      where the embeddings go (default: outputs/embeddings)
+#   LIMIT          only the first N songs, for a quick test
+# e.g.: make embed MODEL=clap SOURCE=generated CONFIG=no-cot
+embed:
+	uv run python scripts/extract_embeddings.py --model $(MODEL) --source $(SOURCE) $(if $(CONFIG),--config $(CONFIG)) \
+		$(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) $(if $(AUDIO_DIR),--audio-dir $(AUDIO_DIR)) \
+		$(if $(EMBED_DIR),--output-dir $(EMBED_DIR)) $(if $(LIMIT),--limit $(LIMIT))

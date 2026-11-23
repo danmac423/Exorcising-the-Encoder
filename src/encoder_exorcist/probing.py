@@ -22,7 +22,7 @@ k_{layer}, v_{layer}, dit_{layer}_{point}_t{step} and dit_{layer}_{point}_mean (
 
 import logging
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,10 +84,13 @@ class ProbeData:
     lyrics: np.ndarray  # [n_songs] lyrics text (object array, "" when not found)
     languages: np.ndarray  # [n_songs] vocal language in the lyric encoder input ("unknown" unless the LM set one)
     features: dict[str, np.ndarray]  # point name -> [n_songs, d]
+    genres: np.ndarray | None = None  # [n_songs] genre per song (only set for embedding probes)
 
 
 def point_group(name: str) -> str:
-    """Coarse group of a feature name, for plotting and filtering: stream, lyric, kv, dit or baseline."""
+    """Coarse group of a feature name, for plotting and filtering: stream, lyric, kv, dit, embedding or baseline."""
+    if name in ("clap", "mulan"):
+        return "embedding"
     if name in STREAM_KEYS:
         return "stream"
     for prefix, group in (("lyric_L", "lyric"), ("k_", "kv"), ("v_", "kv"), ("dit_", "dit")):
@@ -316,4 +319,81 @@ def run_probes(
     per_artist = [r for _, rows_ in results for r in rows_]
     order = {name: i for i, name in enumerate([*names, *BASELINES])}
     rows.sort(key=lambda r: order[r["point"]])
+    return rows, per_artist
+
+
+# --- Output-side probes: song embeddings of generated (or original) audio, paper Sec. 3.4 and Table 2 ---
+
+ALL_GENRES = "all"
+EMBEDDING_RESULT_FIELDS = ["scope", *RESULT_FIELDS]
+EMBEDDING_PER_ARTIST_FIELDS = ["scope", *PER_ARTIST_FIELDS]
+
+
+def load_embedding_data(embedding_files: Mapping[str, Path], songs: Mapping[str, Mapping[str, str]]) -> ProbeData:
+    """Probe data from embeddings.npz files (encoder_exorcist.embeddings), one point per model.
+
+    `songs` maps song_id -> {"artist", "title", "genre"}. Only songs present in every file and in `songs` are used,
+    in the order of the first file.
+    """
+    loaded: dict[str, dict[str, np.ndarray]] = {}
+    for name, path in embedding_files.items():
+        with np.load(path) as data:
+            loaded[name] = dict(zip(data["song_ids"].tolist(), data["embeddings"], strict=True))
+    first = next(iter(loaded.values()))
+    song_ids = [s for s in first if s in songs and all(s in vectors for vectors in loaded.values())]
+    if not song_ids:
+        raise ValueError("no songs shared by the embedding files and the song metadata")
+    skipped = len(first) - len(song_ids)
+    if skipped:
+        logger.warning("skipping %d embedded songs without metadata or missing from another model", skipped)
+    rows = [songs[s] for s in song_ids]
+    return ProbeData(
+        song_ids=song_ids,
+        artists=np.array([r["artist"] for r in rows]),
+        groups=np.array([f"{r['artist']}|{r['title']}" for r in rows]),
+        lyrics=np.array([""] * len(rows), dtype=object),
+        languages=np.array(["unknown"] * len(rows), dtype=object),
+        features={
+            name: np.stack([vectors[s] for s in song_ids]).astype(np.float32) for name, vectors in loaded.items()
+        },
+        genres=np.array([r.get("genre", "") for r in rows]),
+    )
+
+
+def select_songs(data: ProbeData, mask: np.ndarray) -> ProbeData:
+    return ProbeData(
+        song_ids=[s for s, keep in zip(data.song_ids, mask, strict=True) if keep],
+        artists=data.artists[mask],
+        groups=data.groups[mask],
+        lyrics=data.lyrics[mask],
+        languages=data.languages[mask],
+        features={name: X[mask] for name, X in data.features.items()},
+        genres=None if data.genres is None else data.genres[mask],
+    )
+
+
+def run_embedding_probes(
+    data: ProbeData, n_permutations: int = N_PERMUTATIONS, n_jobs: int = -1
+) -> tuple[list[dict], list[dict]]:
+    """Artist probe on every embedding, over all songs ("all") and within each genre (paper Table 2).
+
+    Same classifier, folds and permutation test as the activation probes. Rows carry an extra "scope" column
+    (EMBEDDING_RESULT_FIELDS, EMBEDDING_PER_ARTIST_FIELDS); chance is 1 / number of artists in the scope.
+    """
+    scopes = {ALL_GENRES: np.ones(len(data.song_ids), dtype=bool)}
+    if data.genres is not None:
+        scopes |= {genre: data.genres == genre for genre in sorted(set(data.genres.tolist())) if genre}
+    rows: list[dict] = []
+    per_artist: list[dict] = []
+    for scope, mask in scopes.items():
+        subset = select_songs(data, mask)
+        if len(set(subset.artists.tolist())) < 2:
+            logger.warning("skipping scope %s: fewer than 2 artists", scope)
+            continue
+        logger.info("probing scope %s: %d songs", scope, len(subset.song_ids))
+        scope_rows, scope_per_artist = run_probes(
+            subset, permuted=list(subset.features), n_permutations=n_permutations, baselines=False, n_jobs=n_jobs
+        )
+        rows += [{"scope": scope, **row} for row in scope_rows]
+        per_artist += [{"scope": scope, **row} for row in scope_per_artist]
     return rows, per_artist
