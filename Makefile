@@ -1,5 +1,5 @@
 
-.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe clean
+.PHONY: install fmt lint typecheck test check run data audio anonymize generate generate-check probe embed clean
 
 install:
 	uv sync
@@ -89,3 +89,17 @@ probe:
 clean:
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache -o -name .mypy_cache \) -not -path "./.venv/*" -prune -exec rm -rf {} +
 	rm -rf .coverage coverage.xml htmlcov dist build *.egg-info
+
+# Embed songs with LAION-CLAP or MuQ-MuLan (see encoder_exorcist/embeddings.py), writes EMBED_DIR/<MODEL>/<SOURCE>/.
+#   MODEL          clap or mulan (required)
+#   SOURCE         generated (songs of a generation run) or reference (audio_reference/) (required)
+#   CONFIG         generation run for SOURCE=generated (default: no-cot)
+#   GENERATED_DIR  generation runs (default: outputs/generated)
+#   AUDIO_DIR      reference recordings (default: audio_reference)
+#   EMBED_DIR      where the embeddings go (default: outputs/embeddings)
+#   LIMIT          only the first N songs, for a quick test
+# e.g.: make embed MODEL=clap SOURCE=generated CONFIG=no-cot
+embed:
+	uv run python scripts/extract_embeddings.py --model $(MODEL) --source $(SOURCE) $(if $(CONFIG),--config $(CONFIG)) \
+		$(if $(GENERATED_DIR),--generated-dir $(GENERATED_DIR)) $(if $(AUDIO_DIR),--audio-dir $(AUDIO_DIR)) \
+		$(if $(EMBED_DIR),--output-dir $(EMBED_DIR)) $(if $(LIMIT),--limit $(LIMIT))

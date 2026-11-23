@@ -28,6 +28,9 @@ dependencies = [
     "imageio-ffmpeg>=0.8.0",
     "scikit-learn>=1.7",
     "curl-cffi>=0.17.0",
+    # Audio embeddings (encoder_exorcist.embeddings)
+    "laion-clap>=1.1.6",
+    "muq",
 ]
 
 [project.scripts]
